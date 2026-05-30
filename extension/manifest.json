@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Better Subs for Crunchyroll",
+  "version": "1.2.0",
+  "description": "Mix and match subtitle and audio languages on Crunchyroll, with a custom subtitle overlay and adjustable size, sync, and style.",
+  "minimum_chrome_version": "88",
+  "permissions": ["storage"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-jp-cc": {
+      "suggested_key": { "default": "Alt+J" },
+      "description": "Toggle the subtitle overlay"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Better Subs for Crunchyroll",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.crunchyroll.com/*"],
+      "js": [
+        "lib/settings-schema.js",
+        "lib/protocol.js",
+        "lib/storage.js",
+        "lib/playback-api.js",
+        "lib/subtitle-parser.js",
+        "lib/subtitle-catalog.js",
+        "lib/episode.js",
+        "lib/overlay-ui.js",
+        "lib/cue-style.js",
+        "lib/cue-renderer.js",
+        "lib/wrong-title.js",
+        "lib/remaster.js",
+        "lib/source-menu.js",
+        "interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://www.crunchyroll.com/*"],
+      "js": [
+        "lib/iso-bundle.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

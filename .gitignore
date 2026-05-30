@@ -1,0 +1,21 @@
+# ── Local tooling / editor ──────────────────────────────────────────────
+.claude/settings.local.json
+.vscode/
+.idea/
+*.code-workspace
+
+# ── OS cruft ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node (dev tooling only — the extension itself ships no dependencies) ──
+node_modules/
+npm-debug.log*
+
+# ── Packaging artifacts ─────────────────────────────────────────────────
+dist/
+*.zip
+*.crx
+*.pem
+web-ext-artifacts/
