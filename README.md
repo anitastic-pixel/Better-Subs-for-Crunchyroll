@@ -1,5 +1,7 @@
 # Better Subs for Crunchyroll
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Manifest V3](https://img.shields.io/badge/manifest-v3-4caf50.svg) ![Data collected: none](https://img.shields.io/badge/data%20collected-none-ff6b35.svg) ![Chrome 88+](https://img.shields.io/badge/chrome-88%2B-4285F4.svg)
+
 A Chrome extension that lets you mix and match subtitle languages independently from the audio track on Crunchyroll. Watch the English dub with Japanese subtitles, the Japanese dub with French subtitles, or any other combination — the audio and subtitle tracks are fully decoupled.
 
 > **Not affiliated with, endorsed by, or sponsored by Crunchyroll.** "Crunchyroll" is a trademark of its respective owner and is used here only to describe what this extension works with. The extension adds no content of its own — it only re-selects subtitle tracks that Crunchyroll already serves to your own account.
@@ -33,7 +35,17 @@ Japanese, English, English (UK), Deutsch, Español (Lat), Español (España), Fr
 
 ---
 
-## Installation
+## Install
+
+### From the Chrome Web Store
+
+> 🚧 **Pending review.** Once the listing is approved, the install button and a live version badge will appear here.
+>
+> <!-- After the listing is published, replace EXTENSION_ID below and uncomment:
+> [![Available in the Chrome Web Store](https://img.shields.io/chrome-web-store/v/EXTENSION_ID?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/EXTENSION_ID)
+> -->
+
+### From source (developer mode)
 
 1. Download or clone this repository
 2. Open Chrome and go to `chrome://extensions`
@@ -112,6 +124,14 @@ Subtitle text is cached in `sessionStorage` per tab session to avoid redundant C
 | `storage` | Persists user settings and subtitle cache across sessions |
 
 No host permissions required. No remote code. No data collection or external servers.
+
+---
+
+## Privacy
+
+**Better Subs for Crunchyroll collects no data.** No analytics, no tracking, no accounts, no remote servers. Your settings and a short-lived subtitle cache live entirely on your own device, and the extension only ever communicates with Crunchyroll's own servers — reusing the session your browser already has.
+
+See the full [Privacy Policy](PRIVACY.md).
 
 ---
 
