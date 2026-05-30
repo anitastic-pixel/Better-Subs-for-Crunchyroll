@@ -1858,7 +1858,12 @@
   }
 
   // ── Main fetch intercept ───────────────────────────────────────────────────
-  window.fetch = async function (...args) {
+  // The outer wrapper is intentionally synchronous: a request we don't
+  // intercept returns originalFetch's promise unchanged, so its rejection
+  // (e.g. an ad-blocked analytics beacon that goes through fetch) surfaces at
+  // the caller — not inside an async frame of ours.  Only playback/manifest
+  // URLs are handled asynchronously, by interceptPlayback / interceptManifest.
+  window.fetch = function (...args) {
     const input = args[0];
     const url   = typeof input === 'string' ? input
                 : input instanceof Request  ? input.url : '';
@@ -1882,225 +1887,229 @@
       }
     }
 
-    // ── 1. Playback JSON ──
-    if (PLAYBACK_RE.test(url) && ep) {
-      const authHdrs = extractAuthHeader(args[1] ?? {});
-      if (Object.keys(authHdrs).length) ep.setCapturedAuth(authHdrs);
+    if (PLAYBACK_RE.test(url) && ep) return interceptPlayback(args, url, ep);
+    if (MANIFEST_RE.test(url))       return interceptManifest(args, ep);
 
-      const cachedJpGuid = ep.getMappedJpGuid();
-      if (cachedJpGuid && !ep.jpCaptionUrl) {
-        log.info(`JP-first fetch (ep: ${ep.guid}, jp: ${cachedJpGuid})`);
-        try {
-          const jpData = await fetchAndCacheJpData(cachedJpGuid, authHdrs);
-          if (ep.disposed) { /* navigation happened mid-fetch — drop */ }
-          else {
-            if (jpData?.jpRow) storeSessionSubs('ja-JP', jpData.jpRow);
-            if (jpData?.captionUrl || jpData?.subtitleUrl) {
-              ep.setJpUrls(jpData.captionUrl ?? null, jpData.subtitleUrl ?? null);
-              ep.setJpGuid(cachedJpGuid);
-              ep.setAuthHeaders(authHdrs);
-              setJpStatus(PROTOCOL.STATUS.READY);
-              log.info('JP-first success. Caption:', ep.jpCaptionUrl, '| Sub:', ep.jpSubtitleUrl);
-              tryAutoActivate();
-              onJpDataReady();
-              backgroundValidateAll().catch(() => {});
-            } else {
-              log.warn('JP-first: no EN URL — other subtitle languages may still be available.');
-            }
-          }
-        } catch (err) {
-          log.warn('JP-first error:', err);
-        }
-      }
-
-      const response = await originalFetch(...args);
-
-      // Bail if navigation disposed the Episode while waiting on the network.
-      if (ep.disposed) return response;
-
-      try {
-        const data = await response.clone().json();
-
-        const watchingJP = data.audioLocale === 'ja-JP';
-        ep.setCurrentAudio(data.audioLocale ?? null);
-        const currentAudio = ep.catalog.currentAudio();
-        updateActiveInfo();
-
-        const jpVersion = PLAYBACK.jpVersion(data);
-        if (!jpVersion) {
-          // Crunchyroll's API sometimes returns a versions list without
-          // ja-JP for certain dub variants of an episode that DOES have JP.
-          // If we already have JP data (loaded just above by the JP-first
-          // fetch, or carried forward from a prior dub of the same episode),
-          // don't overwrite that with 'unavail' — JP is still available.
-          const haveJpHint = !!ep.jpCaptionUrl || !!ep.jpSubtitleUrl
-                          || !!ep.jpGuid || !!ep.getMappedJpGuid?.();
-          if (haveJpHint) {
-            log.info('Dub response missing ja-JP — keeping prior JP data (cross-dub).');
-          } else {
-            log.info('No ja-JP version — skipping.');
-            setJpStatus(PROTOCOL.STATUS.UNAVAILABLE);
-            setPendingActivate(false); // queued click can't succeed — clear it
-            const btn = document.getElementById(BTN_ID);
-            if (btn) setButtonState(btn, 'unavail');
-          }
-          return response;
-        }
-
-        ep.setMappedJpGuid(jpVersion.guid);
-        ep.setAuthHeaders(authHdrs);
-        if (!ep.jpGuid) ep.setJpGuid(jpVersion.guid);
-
-        const sessionSubs = PLAYBACK.subtitleMap(data);
-
-        // Store ALL subtitle URLs from this session into the catalog row for this audio locale.
-        storeSessionSubs(currentAudio, sessionSubs);
-        log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
-
-        // Race-condition fix: JP-first may have activated the overlay before this
-        // audio session's subtitle URLs were stored.  Now that the audio row is
-        // populated, re-run remaster so it can find the bridging language.
-        if (overlayActive && ep.originalCues.length > 0 && ep.activeSubUrl &&
-            (!ep.remasteredCues || ep.remasterForAudio !== currentAudio)) {
-          ep.clearRemaster();
-          renderer.invalidate();
-          runRemaster(ep.originalCues, ep.activeSubUrl, ep.activeSource()).catch(() => {});
-        }
-
-        tryAutoActivate();
-        onJpDataReady();
-        backgroundValidateAll().catch(() => {});
-
-        // Auto-reload active subs when the audio session changes and a better-timed
-        // subtitle URL is now available for the active locale.
-        const active = ep.activeSource();
-        if (overlayActive && active && active !== 'ja-JP') {
-          const betterUrl = getSubtitleUrl(active);
-          if (betterUrl && subUrlBase(betterUrl) !== subUrlBase(ep.activeSubUrl)) {
-            log.info(`Audio changed → reloading [${active}] subs for new session.`);
-            const reloadBtn = document.getElementById(BTN_ID);
-            if (reloadBtn) {
-              overlayActive = false;
-              ep.setActiveSubUrl(null);
-              ep.clearCues();
-              renderer.invalidate();
-              stopSync();
-              handleButtonClick(reloadBtn).catch(() => {});
-            }
-          }
-        }
-
-        // Build the source picker list — JP first, then the other audio dubs.
-        const newVersions = [{ locale: 'ja-JP', guid: jpVersion.guid }];
-        for (const v of PLAYBACK.audioVersions(data)) {
-          if (v.locale !== 'ja-JP') newVersions.push(v);
-        }
-        // Add every subtitle locale that isn't already represented by an audio dub —
-        // covers subtitle-only languages (no separate audio track) carried by the JP session.
-        const versionLocales = new Set(newVersions.map(v => v.locale));
-        for (const loc of allKnownSubtitleLocales()) {
-          if (!versionLocales.has(loc)) { newVersions.push({ locale: loc, guid: null }); versionLocales.add(loc); }
-        }
-        newVersions.sort((a, b) => {
-          if (a.locale === 'ja-JP') return -1;
-          if (b.locale === 'ja-JP') return 1;
-          return a.locale.localeCompare(b.locale);
-        });
-        ep.catalog.setVersions(newVersions);
-        sourceMenu.updateButtonVisibility();
-        log.info(`Source picker: ${newVersions.map(v => v.locale).join(', ')}`);
-
-        // Auto-recover the button from a premature-click 'unavail' state.
-        // The user clicked JP CC during the gap between dub-switch SPA
-        // navigation and this playback response arriving, so the catalog
-        // was empty at the time and we marked it unavailable.  Now that we
-        // have data, return the button to 'idle' so a second click works.
-        {
-          const stuckBtn = document.getElementById(BTN_ID);
-          if (stuckBtn && stuckBtn.dataset.state === 'unavail') {
-            log.info('Catalog populated — clearing stuck `unavail` button state.');
-            setButtonState(stuckBtn, 'idle');
-            setJpStatus(PROTOCOL.STATUS.NONE);
-          }
-        }
-
-        if (watchingJP) {
-          if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl && ep.jpGuid) {
-            maybePrefetch();
-          }
-          return response;
-        }
-
-        log.info(`Found ja-JP version: ${jpVersion.guid}`);
-
-        if (data.token) {
-          const enGuid  = url.match(PLAYBACK_RE)[1];
-          const enToken = data.token;
-          // Episode handles deregistering any prior beforeunload handler before
-          // registering this new one — quality changes and stream restarts
-          // re-trigger this block, and stale handlers would fire multiple
-          // DELETEs for outdated tokens on page unload.
-          const handler = () => {
-            originalFetch(
-              `https://www.crunchyroll.com/playback/v1/token/${enGuid}/${enToken}`,
-              { method: 'DELETE', credentials: 'include', headers: authHdrs, keepalive: true }
-            ).catch(() => {});
-          };
-          ep.setEnSessionCleanup(handler);
-          window.addEventListener('beforeunload', handler, { once: true });
-          log.info('EN session cleanup registered.');
-        }
-
-        if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl) {
-          // JP guid just discovered — need a reload so the JP-first path can fetch
-          // subtitle data with the correct auth on the next load.
-          const reloadKey = 'crSubFix_reloaded_' + ep.guid;
-          const btn       = document.getElementById(BTN_ID);
-          if (!STORAGE.ssHas(reloadKey)) {
-            log.info('JP guid cached — reloading for JP subs.');
-            if (btn) setButtonState(btn, 'reload');
-            // Set the guard BEFORE scheduling the reload. If setItem throws
-            // (quota full / storage blocked), cancel the reload to avoid an
-            // infinite reload loop.
-            if (STORAGE.ssSet(reloadKey, '1')) {
-              setTimeout(() => location.reload(), 600);
-            } else {
-              log.warn('sessionStorage unavailable — reload skipped.');
-              if (btn) setButtonState(btn, 'idle');
-            }
-          } else {
-            log.info('JP guid known — reload already done this session.');
-            if (btn) setButtonState(btn, 'idle');
-          }
-        }
-      } catch (err) {
-        log.error('Playback interceptor error:', err);
-      }
-
-      return response;
-    }
-
-    // ── 2. DASH manifest ──
-    if (MANIFEST_RE.test(url)) {
-      const response = await originalFetch(...args);
-      const jpCap = ep?.jpCaptionUrl;
-      if (!jpCap) return response;
-      try {
-        const xml      = await response.clone().text();
-        const modified = swapVttInManifest(xml, jpCap);
-        if (modified === xml) { log.warn('Manifest swap: no text/vtt BaseURL found.'); return response; }
-        log.info('Manifest text/vtt swapped to JP caption.');
-        const headers = {};
-        response.headers.forEach((v, k) => { headers[k] = v; });
-        return new Response(modified, { status: response.status, statusText: response.statusText, headers });
-      } catch (err) {
-        log.error('Manifest interceptor error:', err);
-        return response;
-      }
-    }
-
+    // Everything else passes straight through, untouched.
     return originalFetch(...args);
   };
+
+  // ── Playback JSON intercept ──
+  async function interceptPlayback(args, url, ep) {
+    const authHdrs = extractAuthHeader(args[1] ?? {});
+    if (Object.keys(authHdrs).length) ep.setCapturedAuth(authHdrs);
+
+    const cachedJpGuid = ep.getMappedJpGuid();
+    if (cachedJpGuid && !ep.jpCaptionUrl) {
+      log.info(`JP-first fetch (ep: ${ep.guid}, jp: ${cachedJpGuid})`);
+      try {
+        const jpData = await fetchAndCacheJpData(cachedJpGuid, authHdrs);
+        if (ep.disposed) { /* navigation happened mid-fetch — drop */ }
+        else {
+          if (jpData?.jpRow) storeSessionSubs('ja-JP', jpData.jpRow);
+          if (jpData?.captionUrl || jpData?.subtitleUrl) {
+            ep.setJpUrls(jpData.captionUrl ?? null, jpData.subtitleUrl ?? null);
+            ep.setJpGuid(cachedJpGuid);
+            ep.setAuthHeaders(authHdrs);
+            setJpStatus(PROTOCOL.STATUS.READY);
+            log.info('JP-first success. Caption:', ep.jpCaptionUrl, '| Sub:', ep.jpSubtitleUrl);
+            tryAutoActivate();
+            onJpDataReady();
+            backgroundValidateAll().catch(() => {});
+          } else {
+            log.warn('JP-first: no EN URL — other subtitle languages may still be available.');
+          }
+        }
+      } catch (err) {
+        log.warn('JP-first error:', err);
+      }
+    }
+
+    const response = await originalFetch(...args);
+
+    // Bail if navigation disposed the Episode while waiting on the network.
+    if (ep.disposed) return response;
+
+    try {
+      const data = await response.clone().json();
+
+      const watchingJP = data.audioLocale === 'ja-JP';
+      ep.setCurrentAudio(data.audioLocale ?? null);
+      const currentAudio = ep.catalog.currentAudio();
+      updateActiveInfo();
+
+      const jpVersion = PLAYBACK.jpVersion(data);
+      if (!jpVersion) {
+        // Crunchyroll's API sometimes returns a versions list without
+        // ja-JP for certain dub variants of an episode that DOES have JP.
+        // If we already have JP data (loaded just above by the JP-first
+        // fetch, or carried forward from a prior dub of the same episode),
+        // don't overwrite that with 'unavail' — JP is still available.
+        const haveJpHint = !!ep.jpCaptionUrl || !!ep.jpSubtitleUrl
+                        || !!ep.jpGuid || !!ep.getMappedJpGuid?.();
+        if (haveJpHint) {
+          log.info('Dub response missing ja-JP — keeping prior JP data (cross-dub).');
+        } else {
+          log.info('No ja-JP version — skipping.');
+          setJpStatus(PROTOCOL.STATUS.UNAVAILABLE);
+          setPendingActivate(false); // queued click can't succeed — clear it
+          const btn = document.getElementById(BTN_ID);
+          if (btn) setButtonState(btn, 'unavail');
+        }
+        return response;
+      }
+
+      ep.setMappedJpGuid(jpVersion.guid);
+      ep.setAuthHeaders(authHdrs);
+      if (!ep.jpGuid) ep.setJpGuid(jpVersion.guid);
+
+      const sessionSubs = PLAYBACK.subtitleMap(data);
+
+      // Store ALL subtitle URLs from this session into the catalog row for this audio locale.
+      storeSessionSubs(currentAudio, sessionSubs);
+      log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
+
+      // Race-condition fix: JP-first may have activated the overlay before this
+      // audio session's subtitle URLs were stored.  Now that the audio row is
+      // populated, re-run remaster so it can find the bridging language.
+      if (overlayActive && ep.originalCues.length > 0 && ep.activeSubUrl &&
+          (!ep.remasteredCues || ep.remasterForAudio !== currentAudio)) {
+        ep.clearRemaster();
+        renderer.invalidate();
+        runRemaster(ep.originalCues, ep.activeSubUrl, ep.activeSource()).catch(() => {});
+      }
+
+      tryAutoActivate();
+      onJpDataReady();
+      backgroundValidateAll().catch(() => {});
+
+      // Auto-reload active subs when the audio session changes and a better-timed
+      // subtitle URL is now available for the active locale.
+      const active = ep.activeSource();
+      if (overlayActive && active && active !== 'ja-JP') {
+        const betterUrl = getSubtitleUrl(active);
+        if (betterUrl && subUrlBase(betterUrl) !== subUrlBase(ep.activeSubUrl)) {
+          log.info(`Audio changed → reloading [${active}] subs for new session.`);
+          const reloadBtn = document.getElementById(BTN_ID);
+          if (reloadBtn) {
+            overlayActive = false;
+            ep.setActiveSubUrl(null);
+            ep.clearCues();
+            renderer.invalidate();
+            stopSync();
+            handleButtonClick(reloadBtn).catch(() => {});
+          }
+        }
+      }
+
+      // Build the source picker list — JP first, then the other audio dubs.
+      const newVersions = [{ locale: 'ja-JP', guid: jpVersion.guid }];
+      for (const v of PLAYBACK.audioVersions(data)) {
+        if (v.locale !== 'ja-JP') newVersions.push(v);
+      }
+      // Add every subtitle locale that isn't already represented by an audio dub —
+      // covers subtitle-only languages (no separate audio track) carried by the JP session.
+      const versionLocales = new Set(newVersions.map(v => v.locale));
+      for (const loc of allKnownSubtitleLocales()) {
+        if (!versionLocales.has(loc)) { newVersions.push({ locale: loc, guid: null }); versionLocales.add(loc); }
+      }
+      newVersions.sort((a, b) => {
+        if (a.locale === 'ja-JP') return -1;
+        if (b.locale === 'ja-JP') return 1;
+        return a.locale.localeCompare(b.locale);
+      });
+      ep.catalog.setVersions(newVersions);
+      sourceMenu.updateButtonVisibility();
+      log.info(`Source picker: ${newVersions.map(v => v.locale).join(', ')}`);
+
+      // Auto-recover the button from a premature-click 'unavail' state.
+      // The user clicked JP CC during the gap between dub-switch SPA
+      // navigation and this playback response arriving, so the catalog
+      // was empty at the time and we marked it unavailable.  Now that we
+      // have data, return the button to 'idle' so a second click works.
+      {
+        const stuckBtn = document.getElementById(BTN_ID);
+        if (stuckBtn && stuckBtn.dataset.state === 'unavail') {
+          log.info('Catalog populated — clearing stuck `unavail` button state.');
+          setButtonState(stuckBtn, 'idle');
+          setJpStatus(PROTOCOL.STATUS.NONE);
+        }
+      }
+
+      if (watchingJP) {
+        if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl && ep.jpGuid) {
+          maybePrefetch();
+        }
+        return response;
+      }
+
+      log.info(`Found ja-JP version: ${jpVersion.guid}`);
+
+      if (data.token) {
+        const enGuid  = url.match(PLAYBACK_RE)[1];
+        const enToken = data.token;
+        // Episode handles deregistering any prior beforeunload handler before
+        // registering this new one — quality changes and stream restarts
+        // re-trigger this block, and stale handlers would fire multiple
+        // DELETEs for outdated tokens on page unload.
+        const handler = () => {
+          originalFetch(
+            `https://www.crunchyroll.com/playback/v1/token/${enGuid}/${enToken}`,
+            { method: 'DELETE', credentials: 'include', headers: authHdrs, keepalive: true }
+          ).catch(() => {});
+        };
+        ep.setEnSessionCleanup(handler);
+        window.addEventListener('beforeunload', handler, { once: true });
+        log.info('EN session cleanup registered.');
+      }
+
+      if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl) {
+        // JP guid just discovered — need a reload so the JP-first path can fetch
+        // subtitle data with the correct auth on the next load.
+        const reloadKey = 'crSubFix_reloaded_' + ep.guid;
+        const btn       = document.getElementById(BTN_ID);
+        if (!STORAGE.ssHas(reloadKey)) {
+          log.info('JP guid cached — reloading for JP subs.');
+          if (btn) setButtonState(btn, 'reload');
+          // Set the guard BEFORE scheduling the reload. If setItem throws
+          // (quota full / storage blocked), cancel the reload to avoid an
+          // infinite reload loop.
+          if (STORAGE.ssSet(reloadKey, '1')) {
+            setTimeout(() => location.reload(), 600);
+          } else {
+            log.warn('sessionStorage unavailable — reload skipped.');
+            if (btn) setButtonState(btn, 'idle');
+          }
+        } else {
+          log.info('JP guid known — reload already done this session.');
+          if (btn) setButtonState(btn, 'idle');
+        }
+      }
+    } catch (err) {
+      log.error('Playback interceptor error:', err);
+    }
+
+    return response;
+  }
+
+  // ── DASH manifest intercept ──
+  async function interceptManifest(args, ep) {
+    const response = await originalFetch(...args);
+    const jpCap = ep?.jpCaptionUrl;
+    if (!jpCap) return response;
+    try {
+      const xml      = await response.clone().text();
+      const modified = swapVttInManifest(xml, jpCap);
+      if (modified === xml) { log.warn('Manifest swap: no text/vtt BaseURL found.'); return response; }
+      log.info('Manifest text/vtt swapped to JP caption.');
+      const headers = {};
+      response.headers.forEach((v, k) => { headers[k] = v; });
+      return new Response(modified, { status: response.status, statusText: response.statusText, headers });
+    } catch (err) {
+      log.error('Manifest interceptor error:', err);
+      return response;
+    }
+  }
 
   watchForPlayer();
   log.info('Fetch interceptor + JP CC button installed.');
