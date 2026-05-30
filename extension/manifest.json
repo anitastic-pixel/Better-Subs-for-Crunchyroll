@@ -44,6 +44,7 @@
         "lib/overlay-ui.js",
         "lib/cue-style.js",
         "lib/cue-renderer.js",
+        "lib/sub-suppression.js",
         "lib/wrong-title.js",
         "lib/remaster.js",
         "lib/source-menu.js",

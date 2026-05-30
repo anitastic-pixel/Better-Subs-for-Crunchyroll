@@ -29,6 +29,10 @@ Reprocessing of **Cues** to align them onto a different **Audio session**'s time
 **Wrong-title**:
 A **Source** whose subtitle file on Crunchyroll's CDN was authored for a completely different title. Detected by comparing subtitle end time against video duration. The **Catalog**'s validation map records affected sources so the menu can flag them.
 
+**Native track**:
+Crunchyroll's own subtitle rendering — the captions it draws through its player, independent of the browser's TextTrack API. While a **Source** overlay is active, the extension *suppresses* the **Native track** (disabling text tracks, injecting hiding CSS, and re-applying on a poll) so only the chosen **Source**'s **Cues** are visible. Suppression policy lives in `lib/sub-suppression.js`.
+_Avoid_: Native subs, CC layer.
+
 ## Relationships
 
 - An **Episode** has one **Catalog**.
