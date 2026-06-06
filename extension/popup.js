@@ -1,6 +1,7 @@
 // ── Element refs ──────────────────────────────────────────────────────────
 const toggleEnabled       = document.getElementById('toggleEnabled');
 const toggleAuto          = document.getElementById('toggleAuto');
+const toggleHideOfficial  = document.getElementById('toggleHideOfficial');
 const scaleSlider         = document.getElementById('scaleSlider');
 const scaleLabel          = document.getElementById('scaleLabel');
 const offsetLabel         = document.getElementById('offsetLabel');
@@ -296,6 +297,7 @@ function updatePreview() {
 function populateFromSettings(s) {
   toggleEnabled.checked = s.enabled;
   toggleAuto.checked    = s.autoActivate;
+  toggleHideOfficial.checked = s.hideOfficialSubs;
   const pct = Math.round(s.subScale * 100);
   scaleSlider.value      = pct;
   scaleLabel.textContent = `${pct}%`;
@@ -366,6 +368,9 @@ toggleEnabled.addEventListener('change', () => {
 });
 toggleAuto.addEventListener('change', () => {
   chrome.storage.local.set({ autoActivate: toggleAuto.checked });
+});
+toggleHideOfficial.addEventListener('change', () => {
+  chrome.storage.local.set({ hideOfficialSubs: toggleHideOfficial.checked });
 });
 
 // ── Subtitle size ─────────────────────────────────────────────────────────

@@ -5,10 +5,13 @@
  * Crunchyroll renders subtitles through its own JS renderer (not the browser's
  * native TextTrack API), so setting track.mode = 'disabled' alone is not enough.
  * Suppression is a four-layer strategy:
- *   1. Disable all TextTrack objects (native API)
+ *   1. Disable all TextTrack objects (native API), kept disabled via the
+ *      TextTrackList 'change'/'addtrack' events so CR re-enabling a track is
+ *      reverted the instant it happens (native cues are the one thing CSS
+ *      can't reach — they render in the video's UA shadow DOM)
  *   2. Inject a <style> with broad class-pattern selectors (CSS layer)
  *   3. DOM-level visibility:hidden on the found container (strongest)
- *   4. 300 ms poll to re-apply if CR's player re-enables anything
+ *   4. 300 ms poll as a backstop to re-apply if anything slips through
  *
  * All bitmovin-race handling, observer + poll lifecycle, track-mode save/restore,
  * and CSS injection live behind this seam — callers don't need to know any of it.
@@ -35,6 +38,8 @@
     let savedCRSubEl    = null;
     let pollTimer       = null;
     let observer        = null;
+    let onTrackChange   = null;   // TextTrackList listeners bound to the active video
+    let onTrackAdd      = null;
 
     function buildSuppressCSS() {
       const patterns = [
@@ -84,10 +89,22 @@
       return null;
     }
 
-    function applyOnce() {
-      for (const track of video?.textTracks ?? []) {
-        if (track.mode !== 'disabled') track.mode = 'disabled';
+    // Save a track's pre-suppression mode once (so deactivate can restore it),
+    // then force it disabled.  Re-disabling an already-disabled track is skipped
+    // so our own write never fires a redundant 'change' event.
+    function rememberAndDisable(track) {
+      if (!savedTrackModes.some(s => s.track === track)) {
+        savedTrackModes.push({ track, mode: track.mode });
       }
+      if (track.mode !== 'disabled') track.mode = 'disabled';
+    }
+
+    function disableAllTracks() {
+      for (const track of video?.textTracks ?? []) rememberAndDisable(track);
+    }
+
+    function applyOnce() {
+      disableAllTracks();
       const found = findCRSubContainer();
       if (found) {
         savedCRSubEl = found;
@@ -110,10 +127,17 @@
       active = true;
       video  = videoEl;
       savedTrackModes = [];
-      for (const track of video.textTracks) {
-        savedTrackModes.push({ track, mode: track.mode });
-        if (track.mode !== 'disabled') track.mode = 'disabled';
-      }
+      disableAllTracks();
+      // Event-driven disabling closes the up-to-300ms window between Crunchyroll
+      // re-enabling a native track (stream (re)start, quality change, seek) and
+      // the next poll: 'change' fires the instant a mode flips, 'addtrack' catches
+      // tracks created after activation.  The poll below stays as a backstop.
+      onTrackChange = () => { if (active) disableAllTracks(); };
+      onTrackAdd    = (e) => { if (active && e.track) rememberAndDisable(e.track); };
+      try {
+        video.textTracks.addEventListener('change',   onTrackChange);
+        video.textTracks.addEventListener('addtrack', onTrackAdd);
+      } catch (_) {}
       injectCSS();
       applyOnce();
       startObserver();
@@ -131,6 +155,15 @@
       pollTimer = null;
       observer?.disconnect();
       observer = null;
+      // Detach track listeners before restoring modes, so our restore writes
+      // don't bounce back through the 'change' handler.
+      if (video && onTrackChange) {
+        try {
+          video.textTracks.removeEventListener('change',   onTrackChange);
+          video.textTracks.removeEventListener('addtrack', onTrackAdd);
+        } catch (_) {}
+      }
+      onTrackChange = onTrackAdd = null;
       document.getElementById(SUPPRESS_ID)?.remove();
       for (const { track, mode } of savedTrackModes) {
         try { track.mode = mode; } catch (_) {}

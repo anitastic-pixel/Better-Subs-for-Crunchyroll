@@ -240,6 +240,7 @@
       // ── Pre-fetch latch ───────────────────────────────────────────────────
       get prefetchTriggered() { return prefetchTriggered; },
       markPrefetchTriggered:  alive(() => { prefetchTriggered = true; }),
+      clearPrefetchTriggered: alive(() => { prefetchTriggered = false; }),
 
       // ── EN session cleanup handler ────────────────────────────────────────
       get enSessionCleanup() { return enSessionCleanup; },

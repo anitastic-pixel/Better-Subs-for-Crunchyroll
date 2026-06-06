@@ -80,14 +80,49 @@
 
   // Developer logging.  Routine play-by-play (info/warn) is silenced in the
   // published build so the extension stays quiet in users' consoles; flip
-  // DEBUG to true while developing to see the full trace.  Genuine,
-  // unexpected errors always print regardless of the flag.
-  const DEBUG = false;
-  const log = {
-    info:  (...a) => { if (DEBUG) console.info(LOG, ...a); },
-    warn:  (...a) => { if (DEBUG) console.warn(LOG, ...a); },
-    error: (...a) => console.error(LOG, ...a),
+  // Debug logging — OFF by default (shippable: quiet console).  Genuine,
+  // unexpected errors always print regardless.  Enable at runtime WITHOUT a
+  // rebuild, straight from the page console:
+  //     crSubFixDebug.on()      // then reload to start tracing
+  //     crSubFixDebug.dump()    // copy(crSubFixDebug.dump()) to share the trace
+  //     crSubFixDebug.off()     // then reload
+  // When on, every log line is also mirrored into a sessionStorage ring buffer so
+  // the trace survives SPA navigations *and* reloads — the devtools console (and
+  // automated capture) are wiped on each pushState, which otherwise hides the
+  // dub-switch decision path.
+  const DEBUG = (() => {
+    try { return localStorage.getItem('crSubFix_debug') === '1'; } catch (_) { return false; }
+  })();
+  const TRACE_KEY = 'crSubFix_trace';
+  const TRACE_MAX = 400;
+  const traceMirror = (level, args) => {
+    try {
+      const arr  = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]');
+      const guid = (location.pathname.split('/')[2] || '?').slice(0, 9);
+      arr.push(`${Date.now()} ${guid} [${level}] ` + args.map(a => {
+        try { return typeof a === 'string' ? a : JSON.stringify(a); }
+        catch (_) { return String(a); }
+      }).join(' '));
+      while (arr.length > TRACE_MAX) arr.shift();
+      sessionStorage.setItem(TRACE_KEY, JSON.stringify(arr));
+    } catch (_) {}
   };
+  const log = {
+    info:  (...a) => { if (DEBUG) { console.info(LOG, ...a); traceMirror('I', a); } },
+    warn:  (...a) => { if (DEBUG) { console.warn(LOG, ...a); traceMirror('W', a); } },
+    error: (...a) => { console.error(LOG, ...a); if (DEBUG) traceMirror('E', a); },
+  };
+  // Always-available diagnostic controls (work whether or not DEBUG is on) so a
+  // user hitting a problem can capture a full trace without a rebuild.
+  try {
+    window.crSubFixDebug = {
+      on:    () => { try { localStorage.setItem('crSubFix_debug', '1'); } catch (_) {} return 'CR Sub Fix debug ON — reload the page to start tracing.'; },
+      off:   () => { try { localStorage.removeItem('crSubFix_debug'); } catch (_) {} return 'CR Sub Fix debug OFF — reload the page to apply.'; },
+      dump:  () => { try { return JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]').join('\n'); } catch (_) { return ''; } },
+      clear: () => { try { sessionStorage.removeItem(TRACE_KEY); } catch (_) {} return 'CR Sub Fix trace cleared.'; },
+      get isOn() { return DEBUG; },
+    };
+  } catch (_) {}
 
   // One-time random token written to a <html> attribute that content.js reads
   // and echoes back inside its CR_SUB_TOGGLE postMessage, so we accept the
@@ -174,6 +209,21 @@
   let queueResolverTimer = null;
   const QUEUE_RESOLVE_MS = 2000;
 
+  // Settle debounce for rapid dub switching.  Each SPA navigation resets this;
+  // when switching pauses for SETTLE_MS, tryAutoActivate fires once more so the
+  // dub the user actually landed on gets its JP subtitles, even if earlier
+  // half-finished switches dropped their bootstrap.
+  let settleTimer = null;
+  let settleAttempts = 0;
+  const SETTLE_MS  = 400;
+  const SETTLE_MAX = 8;
+
+  // Slug → { jpGuid, auth } memory for cross-dub recovery.  A dub switch routes
+  // through a slug-less intermediate URL that disposes the episode holding the
+  // resolved JP guid, so the same-nav carry can't survive it — this can.  See
+  // handleNavigation.
+  const slugJpMemo = new Map();
+
   // Renderer instance — created once at module init, mounted/unmounted per
   // player.  getSubScale is read fresh per render so size-slider changes take
   // effect on the next frame without invalidation.
@@ -219,7 +269,7 @@
       overlayActive = false;
       currentEp()?.setActiveSubUrl(null);
       stopSync();
-      subSuppression.deactivate();
+      syncSubSuppression();   // keep CR subs hidden if "hide official" is on
       if (btn) setButtonState(btn, 'idle');
       setJpStatus(PROTOCOL.STATUS.READY);
     },
@@ -580,6 +630,7 @@
 
   const isEnabled              = () => SETTINGS.read(html, 'enabled');
   const isAutoActivate         = () => SETTINGS.read(html, 'autoActivate');
+  const isHideOfficialSubs     = () => SETTINGS.read(html, 'hideOfficialSubs');
   const getSubScale            = () => SETTINGS.read(html, 'subScale');
   const getSyncOffset          = () => SETTINGS.read(html, 'subOffset');
   const getSubBottomFloor      = () => SETTINGS.read(html, 'subBottomFloor');
@@ -681,6 +732,7 @@
     bgValidatePending = false;
     pendingActivate   = false;
     if (queueResolverTimer) { clearTimeout(queueResolverTimer); queueResolverTimer = null; }
+    clearTimeout(settleTimer); settleTimer = null;
     sourceMenu.close();
     sourceMenu.removeButton();
     renderer.unmount();
@@ -716,29 +768,94 @@
     const priorEp        = EP.current();
     const oldSlug        = getWatchSlug(oldPath);
     const newSlug        = getWatchSlug(newPath);
-    const carryJpGuid    = (wasWatch && isWatch && oldSlug && oldSlug === newSlug)
-      ? (priorEp?.jpGuid ?? null)
+    // Same slug, different guid → audio-dub switch; the Japanese version (and so
+    // the JP subtitle source) is shared across every dub of the episode.  Prefer
+    // the prior Episode's resolved jpGuid, but fall back to its cached guid-map:
+    // when switching FROM the JP dub, jpGuid is often never set (its caption
+    // comes straight from the current session), yet the map still points at the
+    // JP version — without this fallback the carry is skipped, the new dub's map
+    // is never written, and auto-activate has no guid to bootstrap from.
+    // Snapshot the prior Episode's JP guid + auth BEFORE it is disposed, then
+    // remember it keyed by the episode SLUG.  This is the crux of cross-dub
+    // recovery: Crunchyroll routes a dub switch through a TWO-STEP navigation
+    // that drops the slug in between — /watch/<slug> → /watch/<newGuid> (no
+    // slug) → /watch/<newGuid>/<slug>.  The same-nav carry (oldSlug === newSlug)
+    // can NEVER fire across that, and the episode holding the resolved JP guid is
+    // disposed on the slug-less hop, so the mapping was lost on every switch.  A
+    // slug-keyed memory survives the intermediate hop; the session token is
+    // shared across dubs, so the auth carries too.
+    const priorJp = priorEp ? (priorEp.jpGuid ?? priorEp.getMappedJpGuid?.() ?? null) : null;
+    const priorAuth = priorEp
+      ? ((priorEp.capturedAuth && Object.keys(priorEp.capturedAuth).length) ? priorEp.capturedAuth
+         : (priorEp.authHeaders && Object.keys(priorEp.authHeaders).length) ? priorEp.authHeaders
+         : null)
       : null;
+    if (oldSlug && (priorJp || priorAuth)) {
+      const prev = slugJpMemo.get(oldSlug) || {};
+      slugJpMemo.set(oldSlug, { jpGuid: priorJp || prev.jpGuid || null, auth: priorAuth || prev.auth || null });
+    }
 
-    log.info('SPA navigation — resetting state.');
+    const carryJpGuid = (wasWatch && isWatch && oldSlug && oldSlug === newSlug) ? priorJp : null;
+
+    log.info(`SPA nav ${oldSlug || '-'} → ${newSlug || '-'} | priorJpGuid=${priorEp?.jpGuid || '-'} priorMapped=${priorEp?.getMappedJpGuid?.() || '-'} priorAuth=${!!priorAuth} carry=${carryJpGuid || '-'} memo=${(newSlug && slugJpMemo.get(newSlug)?.jpGuid) || '-'}`);
     teardownPageChrome();
     EP.disposeCurrent();
     const guid = getEpisodeGuid();
     if (guid) {
       const ep = EP.start(guid);
-      if (carryJpGuid) {
-        ep.setMappedJpGuid(carryJpGuid);
-        log.info(`Carrying JP guid ${carryJpGuid} across dub switch (slug=${newSlug}).`);
-        // Dub switches where Crunchyroll just swaps the audio track in the
-        // loaded DASH manifest never fire a new /playback/v3/ — so the auth
-        // capture in the fetch wrap never runs, maybePrefetch is never
-        // triggered, JP urls stay null, and auto-activate has nothing to
-        // act on.  fetchAndCacheJpData reads from localStorage cache first
-        // (no auth needed for that branch), so we can kick the prefetch
-        // ourselves once JP data is known to be cached.
-        if (ep.getCachedJpData?.(carryJpGuid)) {
+      // Plant the JP guid + auth: prefer the same-nav carry, else the slug memory
+      // (which survives the slug-less intermediate hop the carry can't).  A stale
+      // token just 401s and we fall back to the reload path.  setMappedJpGuid also
+      // caches the guid→jp map, so once a dub is mapped this way it self-heals on
+      // its next visit.
+      const memo        = newSlug ? slugJpMemo.get(newSlug) : null;
+      const plantJpGuid = carryJpGuid || memo?.jpGuid || null;
+      const plantAuth   = priorAuth || memo?.auth || null;
+      if (plantJpGuid) {
+        ep.setMappedJpGuid(plantJpGuid);
+        if (plantAuth) { ep.setCapturedAuth(plantAuth); ep.setAuthHeaders(plantAuth); }
+        log.info(`Planting JP guid ${plantJpGuid}${plantAuth ? ' + auth' : ''}${carryJpGuid ? ' (carry)' : ' (slug memo)'} (slug=${newSlug || '-'}).`);
+        // Prefetch now whenever we can actually fetch it (cached → no auth needed,
+        // or we have auth for a live fetch).  Skipping when we have neither avoids
+        // latching prefetchTriggered on a doomed attempt.
+        if (ep.getCachedJpData?.(plantJpGuid) || plantAuth) {
           maybePrefetch().catch(() => {});
         }
+      }
+    }
+    // Backstop for rapid switching: re-attempt auto-activate once the user
+    // stops switching, so the dub they finally landed on always gets its subs.
+    scheduleSettle();
+  }
+
+  // Bounded retry of auto-activate, reset on every navigation.  Once switching
+  // has been quiet for SETTLE_MS it nudges tryAutoActivate (which self-heals
+  // from the cached mapping or drives the live fetch), then keeps retrying every
+  // SETTLE_MS until the overlay is up or SETTLE_MAX attempts are exhausted —
+  // covering metadata-not-ready, in-flight-fetch, and cut-short-bootstrap races
+  // from a faster subsequent switch.  Converges instead of giving up after one
+  // shot.
+  function scheduleSettle() {
+    clearTimeout(settleTimer);
+    settleAttempts = 0;
+    settleTimer = setTimeout(settleTick, SETTLE_MS);
+  }
+  function settleTick() {
+    settleTimer = null;
+    if (overlayActive) return;                 // subs are up — done
+    tryAutoActivate();
+    if (overlayActive) return;
+    if (++settleAttempts < SETTLE_MAX) {
+      settleTimer = setTimeout(settleTick, SETTLE_MS);
+    } else {
+      // Genuinely couldn't load JP (no auth + no cache → needs a reload).  Clear
+      // the 'loading' flash so the button doesn't sit spinning forever.
+      const ep = currentEp();
+      const btn = document.getElementById(BTN_ID);
+      if (btn && btn.dataset.state === 'loading' &&
+          (!ep || (!ep.jpCaptionUrl && !ep.jpSubtitleUrl))) {
+        log.warn('Settle: JP subs did not load after retries — clearing loading state.');
+        applyButtonState(btn, 'idle');
       }
     }
   }
@@ -791,6 +908,9 @@
     // hadn't been written yet when JP data first landed), give it another
     // shot now that the attribute reflects the real setting.
     tryAutoActivate();
+    // Pick up live changes to "hide official subs" (and the master enable
+    // toggle) without waiting for the overlay to be touched.
+    syncSubSuppression();
   }).observe(html, { attributes: true, attributeFilter: SETTINGS.ATTRS });
 
   // Called from the playback / JP-first / prefetch success paths after JP
@@ -872,10 +992,32 @@
   function tryAutoActivate() {
     const ep = currentEp();
     if (!ep) return;
-    if (!isAutoActivate() || !ep.shouldAutoActivate() || overlayActive || clickInProgress) return;
+    if (!isAutoActivate() || !ep.shouldAutoActivate() || overlayActive || clickInProgress) {
+      if (!overlayActive) log.info(`autoActivate bail: auto=${isAutoActivate()} should=${ep.shouldAutoActivate()} clicking=${clickInProgress}`);
+      return;
+    }
     const btn = document.getElementById(BTN_ID);
     if (!btn) return;
-    if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl) return;
+    if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl) {
+      // No JP URLs loaded yet — but if a guid mapping exists (carried across a
+      // dub switch, or cached from a prior visit) and we can actually fetch it
+      // (cached → no auth needed, or we have captured auth for a live fetch),
+      // drive the prefetch now.  This recovers dub switches whose JP fetch never
+      // fired (e.g. the playback-vs-pushState ordering race) and, via the settle
+      // retry + the released prefetch latch, keeps retrying until it lands —
+      // instead of leaving the button idle until a manual reload.  maybePrefetch
+      // self-gates and, on success, re-calls tryAutoActivate → which activates.
+      const jpGuid = ep.getMappedJpGuid?.();
+      const canFetch = !!(jpGuid && (ep.getCachedJpData?.(jpGuid) || ep.capturedAuth));
+      log.info(`autoActivate: no JP urls — jpGuid=${jpGuid || '-'} cached=${!!(jpGuid && ep.getCachedJpData?.(jpGuid))} auth=${!!ep.capturedAuth} → ${canFetch ? 'prefetch' : 'WAIT (nothing to fetch)'}`);
+      if (canFetch) {
+        // Ready cue: show 'loading' so the user sees subs are coming.  Only from
+        // idle so we never stomp a 'reload'/'unavail'/'error' message.
+        if (btn.dataset.state === 'idle') setButtonState(btn, 'loading');
+        maybePrefetch().catch(() => {});
+      }
+      return;
+    }
     // Defer until video metadata is loaded so duration-based subtitle validation
     // has an accurate video length to compare against.
     if (videoEl && !(videoEl.duration >= 60)) {
@@ -883,6 +1025,9 @@
       return;
     }
     log.info(`Auto-activating (audio=${ep.catalog.currentAudio()}, source=${ep.activeSource()}).`);
+    // Ready cue: show 'loading' before activating so the flash fires even when JP
+    // is already loaded (the min-duration wrapper holds it briefly, then '✓').
+    if (btn.dataset.state === 'idle') setButtonState(btn, 'loading');
     // Restore the last-used subtitle locale, but only if it is actually available
     // for this episode.  A saved locale from a different episode (e.g. ca-ES that
     // only some shows carry) must not be applied here — fall back to default JP.
@@ -919,6 +1064,7 @@
     ep.markPrefetchTriggered();
     const auth = ep.capturedAuth ?? {};
     log.info(`Pre-fetching JP data (ep: ${ep.guid}, jp: ${jpGuid})`);
+    let loaded = false;
     try {
       const jpData = await fetchAndCacheJpData(jpGuid, auth);
       if (ep.disposed) return;
@@ -929,6 +1075,7 @@
         ep.setAuthHeaders(auth);
         setJpStatus(PROTOCOL.STATUS.READY);
         log.info('JP pre-loaded. Caption:', ep.jpCaptionUrl, '| Sub:', ep.jpSubtitleUrl);
+        loaded = true;
         tryAutoActivate();
         onJpDataReady();
         backgroundValidateAll().catch(() => {});
@@ -937,6 +1084,11 @@
       }
     } catch (err) {
       log.warn('Pre-fetch error:', err);
+    } finally {
+      // Don't strand recovery: if this attempt didn't load JP (no auth yet, or a
+      // transient failure on a rapid switch), release the latch so the settle
+      // retry — or a later auth capture — can try again.
+      if (!loaded && !ep.disposed) ep.clearPrefetchTriggered();
     }
   }
 
@@ -1038,6 +1190,18 @@
     return xml.replace(
       /(<AdaptationSet[^>]*mimeType="text\/vtt"[^>]*>[\s\S]*?<BaseURL>)[^<]*([\s\S]*?<\/AdaptationSet>)/,
       (_, before, after) => `${before}${jpCaptionUrl}${after}`
+    );
+  }
+
+  // "Hide official" path: remove every text/vtt AdaptationSet so Crunchyroll's
+  // player has no subtitle track to fetch or render at all.  This is the only
+  // reliable way to suppress CR's subs on the newer player, whose renderer lives
+  // where our CSS/DOM suppression can't reach — our overlay becomes the sole
+  // subtitle display.
+  function blankVttInManifest(xml) {
+    return xml.replace(
+      /<AdaptationSet\b[^>]*mimeType="text\/vtt"[^>]*>[\s\S]*?<\/AdaptationSet>/g,
+      ''
     );
   }
 
@@ -1255,6 +1419,19 @@
   // suppression selectors never hide our own overlay.
   const subSuppression = NS.createSubSuppression({ overlayId: OVERLAY_ID });
 
+  // Native suppression is wanted in two independent cases: while our overlay is
+  // showing (so Crunchyroll's own track doesn't render under ours), or whenever
+  // the user has opted to always hide Crunchyroll's subtitles ("switch to None").
+  // Reconcile both inputs through one helper so toggling either can't strand the
+  // other — and bail on no-op transitions so rapid settings writes (slider
+  // drags) don't churn the suppression teardown each frame.
+  function syncSubSuppression() {
+    const want = !!(videoEl && isEnabled() && (overlayActive || isHideOfficialSubs()));
+    if (want === subSuppression.isActive()) return;
+    if (want) subSuppression.activate(videoEl);
+    else      subSuppression.deactivate();
+  }
+
   // ── Button ─────────────────────────────────────────────────────────────────
 
   function getSourceShortLabel() {
@@ -1262,7 +1439,33 @@
     return LOCALE_SHORT[loc] ?? loc.slice(0, 2).toUpperCase();
   }
 
+  // Enforce a brief, visible 'loading' → 'active' flash so a dub switch always
+  // shows a "preparing → ready" cue, even when JP loads instantly from cache.
+  // Any other state cancels a pending flash.  The deferred apply re-reads the
+  // live button (it may have been re-injected) and only commits 'active' if the
+  // overlay is actually on.
+  const MIN_FLASH_MS = 400;
+  let _flashAt = 0, _flashTimer = null;
   function setButtonState(btn, state) {
+    if (_flashTimer) { clearTimeout(_flashTimer); _flashTimer = null; }
+    if (state === 'loading') { _flashAt = Date.now(); applyButtonState(btn, 'loading'); return; }
+    if (state === 'active' && _flashAt) {
+      const remain = MIN_FLASH_MS - (Date.now() - _flashAt);
+      if (remain > 0) {
+        applyButtonState(btn, 'loading');
+        _flashTimer = setTimeout(() => {
+          _flashTimer = null; _flashAt = 0;
+          const b = document.getElementById(BTN_ID);
+          if (b && overlayActive) applyButtonState(b, 'active');
+        }, remain);
+        return;
+      }
+    }
+    _flashAt = 0;
+    applyButtonState(btn, state);
+  }
+
+  function applyButtonState(btn, state) {
     btn.dataset.state = state;
     const lbl = getSourceShortLabel();
     // Remaster sync status is exposed on the popup status detail line
@@ -1388,7 +1591,7 @@
       overlayActive = false;
       ep.setActiveSubUrl(null);
       stopSync();
-      subSuppression.deactivate();
+      syncSubSuppression();   // keep CR subs hidden if "hide official" is on
       setButtonState(btn, 'idle');
       setJpStatus(PROTOCOL.STATUS.READY);
       return;
@@ -1396,7 +1599,7 @@
 
     if (ep.hasCues()) {
       overlayActive = true;
-      subSuppression.activate(videoEl);
+      syncSubSuppression();
       setButtonState(btn, 'active');
       setJpStatus(PROTOCOL.STATUS.ACTIVE);
       startSync();
@@ -1594,7 +1797,7 @@
 
       ep.setActiveSubUrl(result.finalUrl);
       overlayActive = true;
-      subSuppression.activate(videoEl);
+      syncSubSuppression();
       setButtonState(btn, 'active');
       setJpStatus(PROTOCOL.STATUS.ACTIVE);
       startSync();
@@ -1797,7 +2000,9 @@
   function setupPlayer(video) {
     if (videoEl === video) return;
     if (videoEl) videoEl.removeEventListener('play', tryAutoActivate);
-    if (overlayActive) subSuppression.deactivate();
+    // Tear down any suppression bound to the outgoing video (overlay- or
+    // "hide official"-driven) before we repoint videoEl at the new one.
+    subSuppression.deactivate();
     overlayActive   = false;
     currentEp()?.clearCues();
     movedToControls = false;
@@ -1808,6 +2013,7 @@
     injectButton();
     videoEl.addEventListener('play', tryAutoActivate);
     tryAutoActivate();
+    syncSubSuppression();   // start hiding CR subs immediately if "hide official" is on
     backgroundValidateAll().catch(() => {});
   }
 
@@ -1858,17 +2064,39 @@
   }
 
   // ── Main fetch intercept ───────────────────────────────────────────────────
-  // The outer wrapper is intentionally synchronous: a request we don't
-  // intercept returns originalFetch's promise unchanged, so its rejection
-  // (e.g. an ad-blocked analytics beacon that goes through fetch) surfaces at
-  // the caller — not inside an async frame of ours.  Only playback/manifest
-  // URLs are handled asynchronously, by interceptPlayback / interceptManifest.
+  // Crunchyroll and co-installed extensions (ad blockers) fire many requests
+  // through our wrapped fetch that get blocked or fail.  When the caller never
+  // catches the rejection it surfaces as "Uncaught (in promise) TypeError:
+  // Failed to fetch" — and because V8 attributes an unhandled fetch rejection to
+  // where fetch was *called*, our wrapper frame gets blamed even though the
+  // request and the missing .catch are entirely the caller's.  These are benign
+  // network failures, not bugs.  Two layers keep them out of the console:
+  //   1. passThrough() marks the promise handled for the common fire-and-forget
+  //      caller (one that attaches no .then at all).
+  //   2. a page-level unhandledrejection listener silences the exact "Failed to
+  //      fetch" TypeError for callers that DO chain .then without .catch — whose
+  //      derived promise we have no reference to.  preventDefault() only
+  //      suppresses the console log; it does not alter any behaviour.
+  // Only playback/manifest URLs are handled async, by intercept{Playback,Manifest}.
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    if (r instanceof TypeError && /failed to fetch/i.test(r.message || '')) {
+      e.preventDefault();
+    }
+  });
+
+  function passThrough(args) {
+    const p = originalFetch(...args);
+    p.catch(() => {});
+    return p;
+  }
+
   window.fetch = function (...args) {
     const input = args[0];
     const url   = typeof input === 'string' ? input
                 : input instanceof Request  ? input.url : '';
 
-    if (!isEnabled()) return originalFetch(...args);
+    if (!isEnabled()) return passThrough(args);
 
     // Snapshot the Episode at request start; writes after dispose() are no-ops.
     // If we're not on /watch/, no Episode exists and we just pass through.
@@ -1891,11 +2119,50 @@
     if (MANIFEST_RE.test(url))       return interceptManifest(args, ep);
 
     // Everything else passes straight through, untouched.
-    return originalFetch(...args);
+    return passThrough(args);
   };
 
   // ── Playback JSON intercept ──
   async function interceptPlayback(args, url, ep) {
+    const response = await runPlaybackIntercept(args, url, ep);
+    // The newer Crunchyroll player renders subtitles from this JSON's
+    // captions/subtitles maps (not the DASH manifest text/vtt track), so when
+    // "hide official" is on we empty those maps in the copy the player receives,
+    // leaving it nothing to render.  Our own catalog/JP logic already read the
+    // untouched data from a clone above, and JP/source subtitle data is fetched
+    // via originalFetch (which bypasses this wrapper), so the player seeing an
+    // empty list never starves the overlay.
+    return isHideOfficialSubs() ? stripOfficialSubs(response) : response;
+  }
+
+  async function stripOfficialSubs(response) {
+    try {
+      const data = await response.clone().json();
+      if (data && typeof data === 'object') {
+        log.info('[hide-official] playback keys:', Object.keys(data).join(','),
+                 '| hardSubs:', data.hardSubs ? Object.keys(data.hardSubs).join('/') : (data.hard_subs ? 'snake:' + Object.keys(data.hard_subs).join('/') : 'none'),
+                 '| url:', (data.url || '').slice(0, 110));
+        // Soft-sub maps (older player rendered from these).
+        data.captions  = {};
+        data.subtitles = {};
+        // The newer player serves HARDSUBBED video — the subtitle is burned into
+        // the picture, picked from this hardSubs map by the viewer's subtitle
+        // preference.  Empty it so the player falls back to the raw top-level
+        // stream URL and the burned-in text never appears.  Only when a raw url
+        // exists, so we never strand the player with no stream.
+        if (data.url && data.hardSubs)  data.hardSubs  = {};
+        if (data.url && data.hardsubs)  data.hardsubs  = {};
+        if (data.url && data.hard_subs) data.hard_subs = {};
+      }
+      const headers = {};
+      response.headers.forEach((v, k) => { headers[k] = v; });
+      return new Response(JSON.stringify(data), { status: response.status, statusText: response.statusText, headers });
+    } catch (_) {
+      return response;
+    }
+  }
+
+  async function runPlaybackIntercept(args, url, ep) {
     const authHdrs = extractAuthHeader(args[1] ?? {});
     if (Object.keys(authHdrs).length) ep.setCapturedAuth(authHdrs);
 
@@ -2095,13 +2362,21 @@
   // ── DASH manifest intercept ──
   async function interceptManifest(args, ep) {
     const response = await originalFetch(...args);
+    const hideOfficial = isHideOfficialSubs();
     const jpCap = ep?.jpCaptionUrl;
-    if (!jpCap) return response;
+    // Nothing to do unless we're hiding CR's subs or swapping in the JP caption.
+    if (!hideOfficial && !jpCap) return response;
     try {
       const xml      = await response.clone().text();
-      const modified = swapVttInManifest(xml, jpCap);
-      if (modified === xml) { log.warn('Manifest swap: no text/vtt BaseURL found.'); return response; }
-      log.info('Manifest text/vtt swapped to JP caption.');
+      // Hide-official wins: strip CR's subtitle track entirely so its renderer
+      // has nothing to show.  Otherwise swap CR's text/vtt to the JP caption so
+      // CR's own renderer displays the replacement (the in-player path).
+      const modified = hideOfficial ? blankVttInManifest(xml) : swapVttInManifest(xml, jpCap);
+      if (modified === xml) {
+        log.warn(hideOfficial ? 'Manifest: no text/vtt AdaptationSet to remove.' : 'Manifest swap: no text/vtt BaseURL found.');
+        return response;
+      }
+      log.info(hideOfficial ? 'Manifest text/vtt track removed (hide official).' : 'Manifest text/vtt swapped to JP caption.');
       const headers = {};
       response.headers.forEach((v, k) => { headers[k] = v; });
       return new Response(modified, { status: response.status, statusText: response.statusText, headers });
