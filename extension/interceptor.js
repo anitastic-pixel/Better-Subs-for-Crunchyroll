@@ -221,8 +221,15 @@
   // Slug → { jpGuid, auth } memory for cross-dub recovery.  A dub switch routes
   // through a slug-less intermediate URL that disposes the episode holding the
   // resolved JP guid, so the same-nav carry can't survive it — this can.  See
-  // handleNavigation.
+  // handleNavigation.  Bounded (MRU on write, evict oldest) so a long browsing
+  // session can't grow it without limit.
   const slugJpMemo = new Map();
+  const SLUG_MEMO_MAX = 50;
+  function rememberSlug(slug, data) {
+    slugJpMemo.delete(slug);                 // re-insert at the most-recent end
+    slugJpMemo.set(slug, data);
+    while (slugJpMemo.size > SLUG_MEMO_MAX) slugJpMemo.delete(slugJpMemo.keys().next().value);
+  }
 
   // Renderer instance — created once at module init, mounted/unmounted per
   // player.  getSubScale is read fresh per render so size-slider changes take
@@ -792,7 +799,7 @@
       : null;
     if (oldSlug && (priorJp || priorAuth)) {
       const prev = slugJpMemo.get(oldSlug) || {};
-      slugJpMemo.set(oldSlug, { jpGuid: priorJp || prev.jpGuid || null, auth: priorAuth || prev.auth || null });
+      rememberSlug(oldSlug, { jpGuid: priorJp || prev.jpGuid || null, auth: priorAuth || prev.auth || null });
     }
 
     const carryJpGuid = (wasWatch && isWatch && oldSlug && oldSlug === newSlug) ? priorJp : null;

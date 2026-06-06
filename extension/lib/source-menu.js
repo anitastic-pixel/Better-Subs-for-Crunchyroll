@@ -308,7 +308,7 @@
       } else {
         found.row.appendChild(menuBtn);
       }
-      console.info(LOG, 'Source picker button injected.');
+      try { if (localStorage.getItem('crSubFix_debug') === '1') console.info(LOG, 'Source picker button injected.'); } catch (_) {}
     }
 
     function removeButton() {
