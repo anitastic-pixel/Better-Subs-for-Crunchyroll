@@ -2,6 +2,7 @@
 const toggleEnabled       = document.getElementById('toggleEnabled');
 const toggleAuto          = document.getElementById('toggleAuto');
 const toggleHideOfficial  = document.getElementById('toggleHideOfficial');
+const toggleIncludeDiag   = document.getElementById('toggleIncludeDiag');
 const scaleSlider         = document.getElementById('scaleSlider');
 const scaleLabel          = document.getElementById('scaleLabel');
 const offsetLabel         = document.getElementById('offsetLabel');
@@ -298,6 +299,7 @@ function populateFromSettings(s) {
   toggleEnabled.checked = s.enabled;
   toggleAuto.checked    = s.autoActivate;
   toggleHideOfficial.checked = s.hideOfficialSubs;
+  toggleIncludeDiag.checked  = s.includeDiagnostics;
   const pct = Math.round(s.subScale * 100);
   scaleSlider.value      = pct;
   scaleLabel.textContent = `${pct}%`;
@@ -371,6 +373,9 @@ toggleAuto.addEventListener('change', () => {
 });
 toggleHideOfficial.addEventListener('change', () => {
   chrome.storage.local.set({ hideOfficialSubs: toggleHideOfficial.checked });
+});
+toggleIncludeDiag.addEventListener('change', () => {
+  chrome.storage.local.set({ includeDiagnostics: toggleIncludeDiag.checked });
 });
 
 // ── Subtitle size ─────────────────────────────────────────────────────────
@@ -626,4 +631,91 @@ togglePreviewAnimate.addEventListener('change', () => {
   const on = togglePreviewAnimate.checked;
   chrome.storage.local.set({ previewAnimate: on });
   previewBox.classList.toggle('animated', on);
+});
+
+// ── Report a problem ──────────────────────────────────────────────────────
+// Primary: POST a redacted diagnostics bundle (+ optional note) straight to the
+// report endpoint (your Worker → Discord) — one click, no GitHub account needed,
+// lands where the automatic error reports do.  Secondary link: open a pre-filled
+// public GitHub issue (the user submits it).  The trace comes from content.js
+// (GET_DIAG); version/browser are popup context.  A failed sendMessage just means
+// the active tab isn't a Crunchyroll page.
+const reportSend      = document.getElementById('reportSend');
+const reportNote      = document.getElementById('reportNote');
+const reportGithub    = document.getElementById('reportGithub');
+const ISSUES_URL      = 'https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues/new';
+const REPORT_ENDPOINT = (self.CRSubFix.config && self.CRSubFix.config.REPORT_ENDPOINT) || '';
+
+async function buildDiagnostics(full) {
+  const lines = [
+    'Better Subs for Crunchyroll — debug info',
+    `version : ${chrome.runtime.getManifest().version}`,
+  ];
+  if (!full) { lines.push('(diagnostics off — only version + your note)'); return lines.join('\n'); }
+  lines.push(`browser : ${navigator.userAgent}`);
+  let page = null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) page = await chrome.tabs.sendMessage(tab.id, { type: MSG.GET_DIAG });
+  } catch (_) { /* no content script on the active tab → not a Crunchyroll page */ }
+
+  if (page) {
+    const s = page.settings || {};
+    lines.push(`page    : ${page.url || '-'}`);
+    lines.push(`state   : jpStatus=${page.jpStatus} active=${page.jpActive} ` +
+               `source=${page.activeInfo?.source ?? '-'} audio=${page.activeInfo?.audio ?? '-'}`);
+    lines.push(`settings: enabled=${s.enabled} auto=${s.autoActivate} ` +
+               `hideOfficial=${s.hideOfficialSubs} styleOverride=${s.styleOverride}`);
+    lines.push('--- recent activity (most recent last) ---');
+    // Keep the most recent trace that fits (headroom reserved for the note + the
+    // Worker's ~4000 cap), trimming the oldest lines.
+    const header = lines.join('\n');
+    let tail = page.trace || '(none captured yet — reproduce the problem on the tab, then report again)';
+    const room = 3600 - header.length;
+    if (tail.length > room) tail = '…(older lines trimmed)\n' + tail.slice(-(room - 25));
+    return header + '\n' + tail;
+  }
+  lines.push('page    : (open the popup on a Crunchyroll video tab to attach activity)');
+  return lines.join('\n');
+}
+
+// Primary — send straight to the report endpoint (Discord).
+reportSend?.addEventListener('click', async () => {
+  if (!REPORT_ENDPOINT) {
+    reportSend.textContent = 'Reporting not configured';
+    setTimeout(() => { reportSend.textContent = 'Send a report'; }, 2500);
+    return;
+  }
+  reportSend.disabled = true;
+  reportSend.textContent = 'Sending…';
+  const note   = (reportNote?.value || '').trim();
+  const bundle = (note ? `note    : ${note}\n` : '') + await buildDiagnostics(toggleIncludeDiag.checked);
+  let ok = false;
+  try {
+    const resp = await fetch(REPORT_ENDPOINT, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text: bundle }),
+    });
+    ok = resp.ok;
+  } catch (_) { ok = false; }
+  reportSend.disabled = false;
+  reportSend.textContent = ok ? '✓ Sent — thanks!' : '✗ Could not send';
+  reportSend.classList.toggle('ok', ok);
+  if (ok && reportNote) reportNote.value = '';
+  setTimeout(() => { reportSend.textContent = 'Send a report'; reportSend.classList.remove('ok'); }, 3000);
+});
+
+// Secondary — open a pre-filled public GitHub issue (the user submits it).
+reportGithub?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const bundle = await buildDiagnostics(toggleIncludeDiag.checked);
+  let copied = false;
+  try { await navigator.clipboard.writeText(bundle); copied = true; } catch (_) {}
+  const body =
+    "**What's wrong?**\n\n\n" +
+    "**Steps to reproduce:**\n1. \n\n\n" +
+    `**Debug info** (${copied ? 'already copied to your clipboard — paste below' : 'paste below'}):\n\n` +
+    '```\n' + (copied ? '<paste here>' : bundle.slice(0, 1500)) + '\n```\n';
+  chrome.tabs.create({ url: `${ISSUES_URL}?body=${encodeURIComponent(body)}` });
 });

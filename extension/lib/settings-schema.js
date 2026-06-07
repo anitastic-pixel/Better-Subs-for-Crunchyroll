@@ -19,6 +19,7 @@
     { key: 'enabled',              attr: 'data-cr-sub-fix',        default: true,       type: 'bool'   },
     { key: 'autoActivate',         attr: 'data-cr-auto-activate',  default: false,      type: 'bool'   },
     { key: 'hideOfficialSubs',     attr: 'data-cr-hide-official',  default: false,      type: 'bool'   },
+    { key: 'includeDiagnostics',   attr: 'data-cr-include-diag',    default: true,       type: 'bool'   },
     { key: 'subScale',             attr: 'data-cr-sub-scale',      default: 1,          type: 'float'  },
     { key: 'subOffset',            attr: 'data-cr-sub-offset',     default: 0,          type: 'float'  },
     { key: 'subBottomFloor',       attr: 'data-cr-sub-bottom-floor', default: 6,        type: 'int'    },

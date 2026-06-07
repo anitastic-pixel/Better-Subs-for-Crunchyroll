@@ -36,6 +36,7 @@
       "js": [
         "lib/settings-schema.js",
         "lib/protocol.js",
+        "lib/config.js",
         "lib/storage.js",
         "lib/playback-api.js",
         "lib/subtitle-parser.js",

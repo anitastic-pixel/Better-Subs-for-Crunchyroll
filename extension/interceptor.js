@@ -78,18 +78,17 @@
   const { hexToRgba } = CUE_STYLE;
   const { buildAnchorMap, remasterCues, computeMedianDelta, MIN_ANCHORS } = REMASTER;
 
-  // Developer logging.  Routine play-by-play (info/warn) is silenced in the
-  // published build so the extension stays quiet in users' consoles; flip
-  // Debug logging — OFF by default (shippable: quiet console).  Genuine,
-  // unexpected errors always print regardless.  Enable at runtime WITHOUT a
-  // rebuild, straight from the page console:
-  //     crSubFixDebug.on()      // then reload to start tracing
-  //     crSubFixDebug.dump()    // copy(crSubFixDebug.dump()) to share the trace
-  //     crSubFixDebug.off()     // then reload
-  // When on, every log line is also mirrored into a sessionStorage ring buffer so
-  // the trace survives SPA navigations *and* reloads — the devtools console (and
-  // automated capture) are wiped on each pushState, which otherwise hides the
-  // dub-switch decision path.
+  // Logging + diagnostics.  The sessionStorage *trace* records ALWAYS (silently)
+  // — it backs the popup's "Report an issue" diagnostics and the crSubFixDebug
+  // tools.  It's cheap: log lines only fire at navigation/activation events,
+  // never per-frame, and ride a 400-entry ring buffer that survives SPA navs and
+  // reloads (the devtools console gets wiped on each pushState).  The DEBUG flag
+  // only adds live *console* output on top — OFF by default so the published
+  // build stays quiet; genuine errors always print.  Toggle console verbosity at
+  // runtime, no rebuild, from the page console:
+  //     crSubFixDebug.on()    // verbose console (then reload)
+  //     crSubFixDebug.dump()  // read the trace (always populated)
+  //     crSubFixDebug.off()   // quiet console again (then reload)
   const DEBUG = (() => {
     try { return localStorage.getItem('crSubFix_debug') === '1'; } catch (_) { return false; }
   })();
@@ -108,18 +107,22 @@
     } catch (_) {}
   };
   const log = {
-    info:  (...a) => { if (DEBUG) { console.info(LOG, ...a); traceMirror('I', a); } },
-    warn:  (...a) => { if (DEBUG) { console.warn(LOG, ...a); traceMirror('W', a); } },
-    error: (...a) => { console.error(LOG, ...a); if (DEBUG) traceMirror('E', a); },
+    info:  (...a) => { if (DEBUG) console.info(LOG, ...a); traceMirror('I', a); },
+    warn:  (...a) => { if (DEBUG) console.warn(LOG, ...a); traceMirror('W', a); },
+    error: (...a) => { console.error(LOG, ...a); traceMirror('E', a); },
   };
   // Always-available diagnostic controls (work whether or not DEBUG is on) so a
   // user hitting a problem can capture a full trace without a rebuild.
   try {
     window.crSubFixDebug = {
-      on:    () => { try { localStorage.setItem('crSubFix_debug', '1'); } catch (_) {} return 'CR Sub Fix debug ON — reload the page to start tracing.'; },
-      off:   () => { try { localStorage.removeItem('crSubFix_debug'); } catch (_) {} return 'CR Sub Fix debug OFF — reload the page to apply.'; },
+      on:    () => { try { localStorage.setItem('crSubFix_debug', '1'); } catch (_) {} return 'CR Sub Fix verbose logging ON — reload to see it in the console.'; },
+      off:   () => { try { localStorage.removeItem('crSubFix_debug'); } catch (_) {} return 'CR Sub Fix verbose logging OFF — reload to apply.'; },
       dump:  () => { try { return JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]').join('\n'); } catch (_) { return ''; } },
       clear: () => { try { sessionStorage.removeItem(TRACE_KEY); } catch (_) {} return 'CR Sub Fix trace cleared.'; },
+      // Throws an uncaught error from our own code so the on-error report nudge
+      // can be tested without waiting for a real bug (no-op unless a
+      // REPORT_ENDPOINT is configured).
+      testReport: () => { if (!DEBUG) return 'Run crSubFixDebug.on() then reload first.'; setTimeout(() => { throw new Error('Better Subs: test report (ignore) #' + Date.now()); }, 0); return 'Test error thrown — watch for the report nudge near the player.'; },
       get isOn() { return DEBUG; },
     };
   } catch (_) {}
@@ -2085,11 +2088,144 @@
   //      derived promise we have no reference to.  preventDefault() only
   //      suppresses the console log; it does not alter any behaviour.
   // Only playback/manifest URLs are handled async, by intercept{Playback,Manifest}.
+  // ── On-error reporting ─────────────────────────────────────────────────────
+  // Dormant unless lib/config.js sets REPORT_ENDPOINT.  When OUR code throws,
+  // show a one-click "send a report?" nudge near the player; the isolated world
+  // (content.js) does the actual POST so Crunchyroll's page CSP can't block it.
+  // Crunchyroll throws its own React hydration errors constantly, so we only act
+  // on errors whose stack references our own extension URL.
+  const REPORT_ENDPOINT = (NS.config && NS.config.REPORT_ENDPOINT) || '';
+  const SELF_URL = (() => {
+    try { const m = (new Error().stack || '').match(/chrome-extension:\/\/[a-p]{32}\//); return m ? m[0] : null; }
+    catch (_) { return null; }
+  })();
+  const reportSeen = new Set();            // error fingerprints nudged this session
+  let reportNudgeOpen = false;
+  const isOurError = (s) => !!(SELF_URL && s && String(s).includes(SELF_URL));
+
+  function maybeReport(message, stack) {
+    if (!REPORT_ENDPOINT || !isEnabled()) return;
+    const fp = String(message || stack || 'error').slice(0, 120);
+    if (reportSeen.has(fp)) return;        // one nudge per unique error per session
+    reportSeen.add(fp);
+    // Record the error + our own top stack frames (extension URLs only — not
+    // sensitive) into the trace so the report carries the where, not just the what.
+    const frames = String(stack || '').split('\n').slice(0, 4).join(' ');
+    log.error('Captured error:', message, frames ? '| ' + frames : '');
+    showReportNudge(String(message || 'An error occurred'));
+  }
+
+  // Build the redacted report bundle in the MAIN world.  Everything's reachable
+  // here (trace, DOM state, settings) except the extension version, which has no
+  // chrome.runtime in MAIN — content.js stashes it in sessionStorage for us.
+  function buildReportBundle(errMessage) {
+    const el = document.documentElement;
+    let version = '?';
+    try { version = sessionStorage.getItem('crSubFix_version') || '?'; } catch (_) {}
+    const lines = [
+      `version : ${version}`,
+      `error   : ${errMessage || '-'}`,
+    ];
+    // Respect the user's opt-out: with diagnostics off, send only version + the
+    // error message — no page, activity, or settings.
+    if (SETTINGS.read(el, 'includeDiagnostics') === false) {
+      lines.push('(diagnostics off — page/activity/settings omitted by the user)');
+      return lines.join('\n');
+    }
+    let activeInfo = {};
+    try { const raw = el.getAttribute(PROTOCOL.ATTR.ACTIVE_INFO); if (raw) activeInfo = JSON.parse(raw); } catch (_) {}
+    lines.push(
+      `browser : ${navigator.userAgent}`,
+      `page    : ${location.href}`,
+      `state   : jpStatus=${el.getAttribute(PROTOCOL.ATTR.JP_STATUS) || '-'} source=${activeInfo.source ?? '-'} audio=${activeInfo.audio ?? '-'}`,
+      `settings: enabled=${SETTINGS.read(el, 'enabled')} auto=${SETTINGS.read(el, 'autoActivate')} hideOfficial=${SETTINGS.read(el, 'hideOfficialSubs')}`,
+      '--- recent activity (most recent last) ---',
+    );
+    // Keep the MOST RECENT trace that fits the budget (the Worker's embed holds
+    // ~4000) — trimming from the front preserves the lines just before the error.
+    const header = lines.join('\n');
+    const redact = (s) => s.replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>');
+    let trace = [];
+    try { trace = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]'); } catch (_) {}
+    let tail = trace.map(redact).join('\n');
+    const room = 3800 - header.length;
+    if (tail.length > room) tail = '…(older lines trimmed)\n' + tail.slice(-(room - 25));
+    return header + '\n' + (tail || '(no trace)');
+  }
+
+  function showReportNudge(message) {
+    if (reportNudgeOpen) return;
+    reportNudgeOpen = true;
+    const wrap = document.createElement('div');
+    wrap.id = 'cr-sub-report-nudge';
+    wrap.style.cssText =
+      'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;' +
+      'display:flex;align-items:center;gap:12px;max-width:92vw;background:#16213e;color:#e0e0e0;' +
+      'border:1px solid rgba(255,107,53,0.5);border-radius:10px;padding:11px 14px;' +
+      'font:500 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,0.55);';
+    const msg = document.createElement('span');
+    msg.textContent = '⚠ Better Subs hit an error. Send a quick report?';
+    const send = document.createElement('button');
+    send.textContent = 'Send';
+    const dismiss = document.createElement('button');
+    dismiss.textContent = 'Dismiss';
+    for (const b of [send, dismiss]) {
+      b.type = 'button';
+      b.style.cssText = 'font:600 12px inherit;border-radius:6px;padding:5px 12px;cursor:pointer;border:1px solid #333;background:#0f0f1e;color:#aaa;';
+    }
+    send.style.color = '#ff6b35'; send.style.borderColor = 'rgba(255,107,53,0.6)';
+    const host = () => document.fullscreenElement || document.documentElement;
+    let done = false, keepAlive = null;
+    const close = () => {
+      if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+      wrap.remove(); reportNudgeOpen = false;
+    };
+    send.addEventListener('click', async () => {
+      if (done) return; done = true;
+      send.disabled = dismiss.disabled = true;
+      msg.textContent = 'Sending…';
+      let ok = false;
+      try {
+        const resp = await originalFetch(REPORT_ENDPOINT, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text: buildReportBundle(message) }),
+        });
+        ok = resp.ok;
+      } catch (_) { ok = false; }
+      msg.textContent = ok ? '✓ Thanks — report sent.' : '✗ Could not send the report.';
+      send.style.display = dismiss.style.display = 'none';
+      setTimeout(close, 2600);
+    });
+    dismiss.addEventListener('click', close);
+    wrap.append(msg, send, dismiss);
+    host().appendChild(wrap);
+    // Crunchyroll's React reconciliation detaches nodes added under <body>/the
+    // player, so host on <html> and re-attach until the nudge is intentionally
+    // closed — otherwise it vanishes before the user can click it.
+    keepAlive = setInterval(() => {
+      if (!reportNudgeOpen) { clearInterval(keepAlive); keepAlive = null; return; }
+      if (!wrap.isConnected) host().appendChild(wrap);
+    }, 500);
+    setTimeout(() => { if (!done) close(); }, 15000);               // auto-dismiss if ignored
+  }
+
+  if (REPORT_ENDPOINT) {
+    window.addEventListener('error', (e) => {
+      const where = e.filename || (e.error && e.error.stack) || '';
+      if (isOurError(where)) maybeReport(e.message || (e.error && e.error.message) || 'error', where);
+    });
+  }
+
   window.addEventListener('unhandledrejection', (e) => {
     const r = e.reason;
     if (r instanceof TypeError && /failed to fetch/i.test(r.message || '')) {
       e.preventDefault();
+      return;
     }
+    const stack = (r && r.stack) || '';
+    if (isOurError(stack)) maybeReport((r && r.message) || String(r), stack);
   });
 
   function passThrough(args) {
@@ -2397,5 +2533,14 @@
   log.info('Fetch interceptor + JP CC button installed.');
   } catch (err) {
     console.error('[CR Sub Fix] interceptor.js threw at module level:', err, err?.stack);
+    // Best-effort persist to the trace (log may not be initialised if the throw
+    // was early) so a later report still carries the load failure.
+    try {
+      const arr = JSON.parse(sessionStorage.getItem('crSubFix_trace') || '[]');
+      arr.push(`${Date.now()} [E] module-level throw: ${err && err.message} | ` +
+        String((err && err.stack) || '').split('\n').slice(0, 4).join(' '));
+      while (arr.length > 400) arr.shift();
+      sessionStorage.setItem('crSubFix_trace', JSON.stringify(arr));
+    } catch (_) {}
   }
 })();

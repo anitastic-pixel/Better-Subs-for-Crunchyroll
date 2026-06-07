@@ -96,6 +96,33 @@
       });
       return true; // keep sendResponse channel open
     }
+
+    // Diagnostics bundle for the popup's "Report an issue".  Assembled here in
+    // the isolated world, which shares the page's sessionStorage + DOM with the
+    // interceptor.  The trace is redacted of signed CDN tokens before it leaves —
+    // the bundle ends up in a public GitHub issue.
+    if (msg.type === MSG.GET_DIAG) {
+      let trace = '';
+      try { trace = JSON.parse(sessionStorage.getItem('crSubFix_trace') || '[]').join('\n'); } catch (_) {}
+      trace = trace.replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>');
+      if (trace.length > 5000) trace = '…(older trimmed)\n' + trace.slice(-5000);  // keep most recent
+      let activeInfo = null;
+      try {
+        const raw = document.documentElement.getAttribute(ATTR.ACTIVE_INFO);
+        if (raw) activeInfo = JSON.parse(raw);
+      } catch (_) {}
+      let settings = {};
+      try { settings = SETTINGS.readAll(document.documentElement); } catch (_) {}
+      sendResponse({
+        url:      location.href,
+        jpStatus: document.documentElement.getAttribute(ATTR.JP_STATUS) ?? STATUS.NONE,
+        jpActive: document.documentElement.getAttribute(ATTR.JP_ACTIVE) === 'true',
+        activeInfo,
+        settings,
+        trace,
+      });
+      return true; // async sendResponse
+    }
   });
 
   // ── Badge relay ──────────────────────────────────────────────────────────
@@ -107,4 +134,11 @@
     attributes: true,
     attributeFilter: [ATTR.JP_ACTIVE],
   });
+
+  // ── Version stash for error reports ────────────────────────────────────────
+  // The MAIN world (interceptor.js) builds + sends the error report but has no
+  // chrome.runtime, so it can't read the manifest version.  Stash it in
+  // sessionStorage — shared across worlds, survives Crunchyroll's DOM churn — for
+  // it to read.
+  try { sessionStorage.setItem('crSubFix_version', chrome.runtime.getManifest().version); } catch (_) {}
 })();

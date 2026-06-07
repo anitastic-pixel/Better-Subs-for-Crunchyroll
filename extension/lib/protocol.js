@@ -48,15 +48,16 @@
 
   // chrome.runtime.sendMessage `type` values.
   const MSG = {
-    TOGGLE_JP_CC: 'TOGGLE_JP_CC',  // background → content (keyboard shortcut)
-    GET_STATUS:   'GET_STATUS',    // popup       → content (status query)
-    SET_BADGE:    'setBadge',      // content     → background (badge update)
+    TOGGLE_JP_CC: 'TOGGLE_JP_CC',     // background → content (keyboard shortcut)
+    GET_STATUS:   'GET_STATUS',       // popup       → content (status query)
+    GET_DIAG:     'GET_DIAGNOSTICS',  // popup       → content (issue-report bundle)
+    SET_BADGE:    'setBadge',         // content     → background (badge update)
   };
 
   // window.postMessage `type` value sent from content.js (isolated world) to
   // interceptor.js (MAIN world) when the keyboard shortcut fires.
   const POST = {
-    CR_SUB_TOGGLE: 'CR_SUB_TOGGLE',
+    CR_SUB_TOGGLE: 'CR_SUB_TOGGLE',  // content → MAIN: toggle overlay (token-guarded)
   };
 
   const protocol = { ATTR, STATUS, MSG, POST };
