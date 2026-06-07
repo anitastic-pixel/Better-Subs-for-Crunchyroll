@@ -1,8 +1,8 @@
 # Better Subs for Crunchyroll
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Manifest V3](https://img.shields.io/badge/manifest-v3-4caf50.svg) ![Data collected: none](https://img.shields.io/badge/data%20collected-none-ff6b35.svg) ![Chrome 88+](https://img.shields.io/badge/chrome-88%2B-4285F4.svg)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Manifest V3](https://img.shields.io/badge/manifest-v3-4caf50.svg) ![Data: opt-in reports only](https://img.shields.io/badge/data-opt--in%20reports%20only-ff6b35.svg) ![Chrome 88+](https://img.shields.io/badge/chrome-88%2B-4285F4.svg)
 
-A Chrome extension that lets you mix and match subtitle languages independently from the audio track on Crunchyroll. Watch the English dub with Japanese subtitles, the Japanese dub with French subtitles, or any other combination — the audio and subtitle tracks are fully decoupled.
+A Chrome extension that lets you mix and match subtitle languages independently from the audio track on Crunchyroll. Watch the English dub with the accurate original subtitles, the Japanese dub with French subtitles, or any other combination — the audio and subtitle tracks are fully decoupled.
 
 > **Not affiliated with, endorsed by, or sponsored by Crunchyroll.** "Crunchyroll" is a trademark of its respective owner and is used here only to describe what this extension works with. The extension adds no content of its own — it only re-selects subtitle tracks that Crunchyroll already serves to your own account.
 
@@ -123,13 +123,15 @@ Subtitle text is cached in `sessionStorage` per tab session to avoid redundant C
 |---|---|
 | `storage` | Persists user settings and subtitle cache across sessions |
 
-No host permissions required. No remote code. No data collection or external servers.
+No host permissions required. No remote code. No data is collected automatically — the only data that ever leaves your device is a problem report you choose to send (see [Privacy](#privacy)).
 
 ---
 
 ## Privacy
 
-**Better Subs for Crunchyroll collects no data.** No analytics, no tracking, no accounts, no remote servers. Your settings and a short-lived subtitle cache live entirely on your own device, and the extension only ever communicates with Crunchyroll's own servers — reusing the session your browser already has.
+**Better Subs for Crunchyroll transmits nothing on its own** — no analytics, no tracking, no accounts. Your settings and a short-lived subtitle cache live entirely on your own device, and during normal use the extension only talks to Crunchyroll's own servers, reusing the session your browser already has.
+
+The one exception is a **problem report you choose to send** (the on-error prompt, or the popup's **Send a report**): it sends a small diagnostic bundle — extension version, the current page, recent in-extension activity, your settings, and an optional note, **with access tokens stripped** — to the developer to help fix the bug. You can turn the diagnostics off in the popup (**Include diagnostics**) to send only the version and your note. Nothing is sold, shared with advertisers, or used for any unrelated purpose.
 
 See the full [Privacy Policy](PRIVACY.md).
 
