@@ -156,7 +156,7 @@ const statusDetail = document.getElementById('statusDetail');
 // interceptor.js but only carries the common ones — anything not listed
 // is shown as the raw code (e.g. "tr-TR"), which is still informative.
 const LOCALE_LABELS = {
-  'ja-JP': 'Japanese',  'en-US': 'English',  'en-GB': 'English (UK)',
+  'ja-JP': 'English (Japanese source)',  'en-US': 'English',  'en-GB': 'English (UK)',
   'de-DE': 'German',    'es-419':'Spanish (LA)','es-ES':'Spanish',
   'fr-FR': 'French',    'pt-BR': 'Portuguese (BR)','pt-PT':'Portuguese',
   'it-IT': 'Italian',   'ru-RU': 'Russian',  'ar-SA': 'Arabic',
@@ -719,3 +719,9 @@ reportGithub?.addEventListener('click', async (e) => {
     '```\n' + (copied ? '<paste here>' : bundle.slice(0, 1500)) + '\n```\n';
   chrome.tabs.create({ url: `${ISSUES_URL}?body=${encodeURIComponent(body)}` });
 });
+
+// ── Version badge (header) ──────────────────────────────────────────────────
+try {
+  const verEl = document.getElementById('appVersion');
+  if (verEl) verEl.textContent = 'v' + chrome.runtime.getManifest().version;
+} catch (_) {}

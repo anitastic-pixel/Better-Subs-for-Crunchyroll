@@ -15,23 +15,47 @@
       padding: 14px;
     }
 
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 14px;
+    }
+    .app-icon {
+      width: 22px; height: 22px;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
     header h1 {
       font-size: 14px;
       font-weight: 700;
       color: #ff6b35;
-      letter-spacing: 0.4px;
-      margin-bottom: 12px;
+      letter-spacing: 0.3px;
+      line-height: 1.1;
+    }
+    .app-sub { color: #8a8a9a; font-weight: 600; }
+    .app-version {
+      margin-left: auto;
+      font-size: 9px;
+      font-weight: 600;
+      color: #6a6a7a;
+      background: #0f0f1e;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 5px;
+      padding: 2px 6px;
+      letter-spacing: 0.3px;
     }
 
     /* ── Status bar ── */
     .status-bar {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 9px;
       background: #0f0f1e;
-      border-radius: 6px;
-      padding: 8px 12px;
-      margin-bottom: 10px;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 7px;
+      padding: 9px 12px;
+      margin-bottom: 12px;
     }
 
     .status-dot {
@@ -44,7 +68,7 @@
     .status-dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-    .status-text { font-size: 11px; color: #aaa; }
+    .status-text { font-size: 12px; color: #ccc; font-weight: 500; }
 
     /* ── Section rows ── */
     .section { margin-bottom: 8px; }
@@ -130,24 +154,32 @@
     }
 
     /* ── Offset buttons ── */
-    .offset-btns { display: flex; gap: 4px; }
+    .offset-btns { display: flex; gap: 4px; align-items: stretch; }
     .offset-btns button {
       flex: 1;
-      padding: 4px 0;
+      padding: 6px 0;
       font-size: 10px;
       font-weight: 600;
       font-family: inherit;
-      background: #0f0f1e;
-      color: #aaa;
-      border: 1px solid #333;
-      border-radius: 4px;
+      background: #1e2b47;
+      color: #b4b4c6;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 6px;
       cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      transition: background 0.13s, color 0.13s, border-color 0.13s, transform 0.06s;
       white-space: nowrap;
     }
-    .offset-btns button:hover { background: #1e2a4a; color: #fff; }
-    .offset-btns button#offsetReset { color: #ff6b35; border-color: #ff6b35; }
-    .offset-btns button#offsetReset:hover { background: rgba(255,107,53,0.15); }
+    .offset-btns button:hover { background: #2a3a5c; color: #fff; border-color: rgba(255,255,255,0.16); }
+    .offset-btns button:active { transform: translateY(1px); }
+    .offset-btns button#offsetReset {
+      flex: 0 0 30px;
+      margin: 0 5px;
+      color: #ff6b35;
+      background: rgba(255,107,53,0.12);
+      border-color: rgba(255,107,53,0.5);
+      font-weight: 700;
+    }
+    .offset-btns button#offsetReset:hover { background: rgba(255,107,53,0.22); border-color: #ff6b35; color: #ff8c5a; }
 
     /* ── Section divider ── */
     .section-label {
@@ -447,9 +479,20 @@
     .preview-sub { text-align: center; position: relative; }
 
     /* ── Footer ── */
-    footer { font-size: 10px; color: #444; text-align: center; margin-top: 8px; }
-
-    .shortcut { font-size: 10px; color: #555; text-align: center; margin-top: 4px; }
+    .app-footer {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .app-footer .kbd-hint { color: #777; }
 
     kbd {
       background: #222;
@@ -499,9 +542,9 @@
 
     /* ── Collapsible groups ── */
     details {
-      margin: 8px 0 4px;
-      border-top: 1px solid rgba(255,255,255,0.06);
-      padding-top: 8px;
+      margin: 12px 0 4px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 10px;
     }
     details > summary {
       list-style: none;
@@ -585,7 +628,11 @@
   </style>
 </head>
 <body>
-  <header><h1>Better Subs <span style="color:#888;font-weight:600;">for Crunchyroll</span></h1></header>
+  <header class="app-header">
+    <img class="app-icon" src="icons/icon48.png" alt="" />
+    <h1>Better Subs <span class="app-sub">for Crunchyroll</span></h1>
+    <span class="app-version" id="appVersion"></span>
+  </header>
 
   <!-- Status -->
   <div class="status-bar">
@@ -699,7 +746,7 @@
        any preset; selecting any other entry overwrites the whole bundle. -->
   <div class="row sm" style="margin-top:6px;">
     <span class="row-label" style="font-size:11px">Preset</span>
-    <select id="presetSelect" title="Apply a saved style preset (overwrites override settings)" style="background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit;cursor:pointer;">
+    <select id="presetSelect" title="Apply a saved style preset (overwrites override settings)" style="flex:1;width:auto;margin-left:14px;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:5px 9px;font-size:11px;font-family:inherit;cursor:pointer;">
       <option value="">Custom</option>
       <option value="cr-default">CR Default</option>
       <option value="white-outlined">White &amp; Outlined</option>
@@ -890,8 +937,10 @@
     </div>
   </details>
 
-  <footer>Reload the episode tab after toggling the extension.</footer>
-  <p class="shortcut">Toggle subtitles: <kbd>Alt+J</kbd></p>
+  <footer class="app-footer">
+    <span>Reload the episode tab after toggling the extension.</span>
+    <span class="kbd-hint">Toggle subtitles <kbd>Alt+J</kbd></span>
+  </footer>
 
   <script src="lib/settings-schema.js"></script>
   <script src="lib/protocol.js"></script>

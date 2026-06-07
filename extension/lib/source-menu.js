@@ -109,7 +109,9 @@
         tag.textContent = '⚠ wrong title';
         tag.style.cssText = 'font-size:10px;color:#cc9900;margin-left:auto;padding-left:8px;flex-shrink:0;';
         row.appendChild(tag);
-      } else if (isValid && !isActive) {
+      } else if (isValid || isActive) {
+        // Active row shows "✓ valid" too (it's the working, selected source) so
+        // it isn't the only row without a status.
         const tag = document.createElement('span');
         tag.dataset.vtag = '1';
         tag.textContent = '✓ valid';
@@ -152,7 +154,7 @@
       if (isWrong) {
         ensureTag().textContent = '⚠ wrong title';
         tag.style.color = '#cc9900';
-      } else if (isValid && !isActive) {
+      } else if (isValid || isActive) {
         ensureTag().textContent = '✓ valid';
         tag.style.color = '#4caf50';
       } else if (validation === 'no-subs' && !unavail) {
@@ -230,24 +232,33 @@
       });
 
       buildContent(menu);
-      const mountTarget = document.fullscreenElement ?? document.body;
-      if (mountTarget !== document.body && window.getComputedStyle(mountTarget).position === 'static') {
+      // Mount INSIDE the player — the video's parent, or the fullscreen element —
+      // so the menu tracks the player and shows in fullscreen, exactly like the
+      // subtitle overlay (cue-renderer mounts to the same container).  Falls back
+      // to <body> with viewport-fixed positioning only if no <video> exists yet.
+      const video       = document.querySelector('video');
+      const mountTarget = document.fullscreenElement ?? video?.parentElement ?? document.body;
+      const inPlayer    = mountTarget !== document.body;
+      if (inPlayer && window.getComputedStyle(mountTarget).position === 'static') {
         mountTarget.style.position = 'relative';
       }
       mountTarget.appendChild(menu);
 
-      const r          = menuBtn.getBoundingClientRect();
-      const mh         = menu.offsetHeight;
-      const spaceAbove = r.top;
-      const spaceBelow = window.innerHeight - r.bottom;
-      if (spaceAbove > mh + 8 || spaceAbove > spaceBelow) {
-        menu.style.bottom = `${window.innerHeight - r.top + 4}px`;
-        menu.style.top    = '';
+      const r     = menuBtn.getBoundingClientRect();
+      const mh    = menu.offsetHeight;
+      const above = r.top > mh + 8 || r.top > window.innerHeight - r.bottom;
+      if (inPlayer) {
+        // position:absolute, relative to the player container's box.
+        menu.style.position = 'absolute';
+        const mt = mountTarget.getBoundingClientRect();
+        if (above) { menu.style.bottom = `${mt.bottom - r.top + 4}px`; menu.style.top = ''; }
+        else       { menu.style.top    = `${r.bottom - mt.top + 4}px`; menu.style.bottom = ''; }
+        menu.style.left = `${Math.max(0, Math.min(r.left - mt.left, mt.width - menu.offsetWidth - 8))}px`;
       } else {
-        menu.style.top    = `${r.bottom + 4}px`;
-        menu.style.bottom = '';
+        if (above) { menu.style.bottom = `${window.innerHeight - r.top + 4}px`; menu.style.top = ''; }
+        else       { menu.style.top    = `${r.bottom + 4}px`; menu.style.bottom = ''; }
+        menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
       }
-      menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
 
       outsideHandler = (e) => {
         if (!menu.contains(e.target) && e.target !== menuBtn) close();

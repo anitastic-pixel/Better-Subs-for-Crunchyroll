@@ -155,7 +155,7 @@
 
   // Human-readable names for audio-locale codes (each dub = a subtitle source option)
   const LOCALE_LABELS = {
-    'ja-JP': 'Japanese',          'en-US': 'English',
+    'ja-JP': 'English (Japanese source)', 'en-US': 'English',
     'en-GB': 'English (UK)',      'de-DE': 'Deutsch',
     'es-419':'Español (Lat)',     'es-ES': 'Español (España)',
     'ca-ES': 'Català',            'fr-FR': 'Français',
@@ -1753,10 +1753,12 @@
 
       if (!result.ok) {
         if (result.kind === 'fetch-failed' || result.kind === 'fetch-error') {
-          // Stale URL: evict caches so the next click re-fetches.
+          // Stale URL: evict caches AND release the prefetch latch so the settle
+          // loop re-fetches a FRESH signed URL instead of spinning on "no JP urls".
           if (lang === 'ja-JP') {
             if (ep.jpGuid) ep.evictCachedJpData(ep.jpGuid);
             ep.clearJpUrls();
+            ep.clearPrefetchTriggered();
           } else {
             catalog.evictUrl(srcLocale);
             const v = catalog.versions().find(v => v.locale === srcLocale);

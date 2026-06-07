@@ -163,9 +163,23 @@
 
     // ── localStorage caches keyed off this Episode ────────────────────────────
     // (Storage envelope and TTL handling live in lib/storage.js.)
+    //
+    // CR's signed CDN URLs carry an absolute expiry (…?t=exp=<unixSeconds>~…).
+    // The cache TTL must never outlive it, or a later cache hit returns a URL the
+    // CDN rejects with HTTP 410.  Cap the TTL to the soonest embedded expiry.
+    function signedUrlTtl(...urls) {
+      let exp = Infinity;
+      for (const u of urls) {
+        const m = u && /[?&~=]exp=(\d{9,12})/.exec(u);
+        if (m) exp = Math.min(exp, parseInt(m[1], 10) * 1000);
+      }
+      return exp === Infinity ? CACHE_TTL : Math.max(0, Math.min(CACHE_TTL, exp - Date.now()));
+    }
     function getCachedJpData(g) { return STORAGE.lsGet(CACHE_PREFIX + g); }
     function setCachedJpData(g, captionUrl, subtitleUrl, jpRow) {
-      STORAGE.lsSet(CACHE_PREFIX + g, { captionUrl, subtitleUrl, jpRow: jpRow ?? {} }, CACHE_TTL);
+      const ttl = signedUrlTtl(captionUrl, subtitleUrl);
+      if (ttl <= 0) return;  // already-expired URL — pointless to cache
+      STORAGE.lsSet(CACHE_PREFIX + g, { captionUrl, subtitleUrl, jpRow: jpRow ?? {} }, ttl);
     }
     function evictCachedJpData(g) { STORAGE.lsDel(CACHE_PREFIX + g); }
 
@@ -178,7 +192,9 @@
     function srcCacheKey(g, locale) { return SRC_CACHE_PREFIX + g + '_' + locale; }
     function getCachedSrcUrl(g, locale) { return STORAGE.lsGet(srcCacheKey(g, locale)); }
     function setCachedSrcUrl(g, locale, url) {
-      STORAGE.lsSet(srcCacheKey(g, locale), { url }, CACHE_TTL);
+      const ttl = signedUrlTtl(url);
+      if (ttl <= 0) return;
+      STORAGE.lsSet(srcCacheKey(g, locale), { url }, ttl);
     }
     function evictCachedSrcUrl(g, locale) { STORAGE.lsDel(srcCacheKey(g, locale)); }
 
