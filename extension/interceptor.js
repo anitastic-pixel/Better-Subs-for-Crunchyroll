@@ -691,6 +691,10 @@
       label:   file.name.replace(/\.[^.]+$/, '').slice(0, 40) || 'Uploaded file',
       lang:    null,
       srcCues: cues,
+      // Render the upload's OWN typeset signs through libass — including any fonts
+      // the .ass embeds in its [Fonts] section (buildSignsAss keeps everything
+      // before [Events]).  null for sign-less files (SRT/VTT).
+      signRawAss: buildSignsAss(text),
       sync:    { mode: 'none' },
     });
     sourceMenu.updateButtonVisibility();
@@ -2879,9 +2883,9 @@
         return;
       }
       ep.setOriginalCues(applyCustomSync(record));
-      // An MT Source carries the base CR track's signs (captured at translate
-      // time) so the typeset stays visible; uploads have none.  null clears libass.
-      setSignSource(record.kind === 'mt' ? (record.signRawAss || null) : null);
+      // MT and uploaded ('local') Sources both carry their own typeset signs in
+      // record.signRawAss; null clears libass for sign-less (SRT/VTT) sources.
+      setSignSource(record.signRawAss || null);
       ep.setActiveSubUrl(null);
       setOverlayActive(true);
       syncSubSuppression();
