@@ -131,7 +131,7 @@ No host permissions required. No remote code. No data is collected automatically
 
 **Better Subs for Crunchyroll transmits nothing on its own** — no analytics, no tracking, no accounts. Your settings and a short-lived subtitle cache live entirely on your own device, and during normal use the extension only talks to Crunchyroll's own servers, reusing the session your browser already has.
 
-The one exception is a **problem report you choose to send** (the on-error prompt, or the popup's **Send a report**): it sends a small diagnostic bundle — extension version, the current page, recent in-extension activity, your settings, and an optional note, **with access tokens stripped** — to the developer to help fix the bug. You can turn the diagnostics off in the popup (**Include diagnostics**) to send only the version and your note. Nothing is sold, shared with advertisers, or used for any unrelated purpose.
+The one exception is a **problem report you choose to send** (the on-error prompt, or the popup's **Send a report**): it sends a small, anonymized diagnostic bundle — extension version, a **coarse platform string** (OS family + Chrome version, never your full user-agent), the **episode id** you're on (a public id; the title slug is dropped), recent in-extension activity, and your settings, plus an optional note — to the developer to help fix the bug. **URLs, signed tokens, emails, and long ids are redacted** before anything leaves your device, and there's no account, profile, or identifier attached. You can turn the diagnostics off in the popup (**Include diagnostics**) to send only the version, platform, and your note. Nothing is sold, shared with advertisers, or used for any unrelated purpose.
 
 See the full [Privacy Policy](PRIVACY.md).
 

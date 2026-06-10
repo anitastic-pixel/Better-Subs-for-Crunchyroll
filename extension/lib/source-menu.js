@@ -13,6 +13,19 @@
  *     localeLabels,        // { 'ja-JP': 'Japanese', ... }
  *     onSelectLocale,      // (locale) → void
  *     onTurnOff,           // () → void  (called when user picks Off)
+ *     onSelectCustom,      // (id) → void  (pick an uploaded / translated track)
+ *     onLoadFile,          // () → void  (open the file picker)
+ *     onRemoveCustom,      // (id) → void  (delete a custom source)
+ *     onAdjustSync,        // (id) → void  (open the two-point sync panel)
+ *     onExport,            // () → void  (download the active custom source as SRT)
+ *     onTranslate,         // () → void  (generate a machine-translated track)
+ *     getTranslateAction,  // () → { label } | null  (show the translate row?)
+ *     onClearMt,           // () → void  (drop all machine-translated tracks)
+ *     getClearMtAction,    // () → { label } | null  (show the clear-MT row?)
+ *     onCancelTranslate,   // () → void  (cancel an in-progress translation)
+ *     getCancelAction,     // () → { label } | null  (show the cancel row?)
+ *     onMtSettings,        // () → void  (open the translation settings panel)
+ *     getMtSettingsAction, // () → { label } | null  (show the ⚙ settings row?)
  *   });
  *   menu.injectButton(found, afterBtn)   // adds the ▾ button to controls
  *   menu.removeButton()                  // removes the ▾ button
@@ -34,6 +47,9 @@
     getEpisode, isOverlayActive,
     localeLabels = {},
     onSelectLocale, onTurnOff,
+    onSelectCustom, onLoadFile, onRemoveCustom, onAdjustSync, onExport,
+    onTranslate, getTranslateAction, onClearMt, getClearMtAction,
+    onCancelTranslate, getCancelAction, onMtSettings, getMtSettingsAction,
   }) {
     let outsideHandler = null;
     let escapeHandler  = null;
@@ -126,6 +142,65 @@
       return row;
     }
 
+    // Row for a custom source: label + a small kind badge (file/machine) and a
+    // hover-revealed × to remove it.  Kept separate from makeRow so the CR-locale
+    // validation-badge logic stays untouched.
+    function makeCustomRow(label, isActive, badge, onClick, onRemove) {
+      const row = document.createElement('div');
+      row.dataset.custom = 'true';
+      if (isActive) row.dataset.active = 'true';
+      Object.assign(row.style, {
+        padding: '7px 14px', cursor: 'pointer', fontSize: '13px',
+        fontFamily: 'sans-serif', color: isActive ? '#ff6b35' : '#e0e0e0',
+        fontWeight: isActive ? '700' : '400', background: 'transparent',
+        userSelect: 'none', whiteSpace: 'nowrap', display: 'flex',
+        alignItems: 'center', gap: '8px', borderRadius: '3px',
+      });
+      const check = document.createElement('span');
+      check.textContent = isActive ? '✓' : '';
+      check.style.cssText = 'width:14px;text-align:center;font-size:11px;flex-shrink:0;';
+      const text = document.createElement('span');
+      text.textContent = label;
+      text.style.cssText = 'overflow:hidden;text-overflow:ellipsis;max-width:150px;';
+      const tag = document.createElement('span');
+      tag.textContent = badge;
+      tag.style.cssText = `font-size:10px;color:${badge === 'machine' ? '#b08cff' : '#7fcfff'};margin-left:auto;padding-left:8px;flex-shrink:0;`;
+      // Always-visible remove button (a small ✕ chip), so it doesn't depend on
+      // hover discovery.  Turns red on its own hover.
+      const del = document.createElement('span');
+      del.textContent = '✕';
+      del.title = 'Remove this source';
+      del.style.cssText = 'font-size:11px;color:#bbb;margin-left:6px;padding:1px 6px;flex-shrink:0;' +
+        'border:1px solid rgba(255,255,255,0.25);border-radius:3px;background:rgba(255,255,255,0.06);cursor:pointer;transition:background 0.12s,color 0.12s,border-color 0.12s;';
+      del.addEventListener('mouseenter', e => { e.stopPropagation(); del.style.background = 'rgba(229,85,85,0.3)'; del.style.color = '#fff'; del.style.borderColor = '#e55'; });
+      del.addEventListener('mouseleave', () => { del.style.background = 'rgba(255,255,255,0.06)'; del.style.color = '#bbb'; del.style.borderColor = 'rgba(255,255,255,0.25)'; });
+      row.appendChild(check);
+      row.appendChild(text);
+      row.appendChild(tag);
+      row.appendChild(del);
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,107,53,0.15)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      del.addEventListener('click', e => { e.stopPropagation(); onRemove?.(); });
+      row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+      return row;
+    }
+
+    // Plain action row (e.g. "Load subtitle file…") — no check column, no badge.
+    function makeActionRow(label, onClick) {
+      const row = document.createElement('div');
+      Object.assign(row.style, {
+        padding: '7px 14px 7px 36px', cursor: 'pointer', fontSize: '12px',
+        fontFamily: 'sans-serif', color: '#9ecbff', fontWeight: '500',
+        background: 'transparent', userSelect: 'none', whiteSpace: 'nowrap',
+        borderRadius: '3px',
+      });
+      row.textContent = label;
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,107,53,0.15)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+      return row;
+    }
+
     function updateRow(locale, validation) {
       const menu = document.getElementById(MENU_ID);
       if (!menu) return;
@@ -202,6 +277,71 @@
         }, validation, v.locale));
       }
 
+      // ── Custom sources (uploaded files / machine translation) ─────────────
+      const customs = ep.listCustomSources?.() ?? [];
+      const curLocale2 = ep.activeSource() ?? 'ja-JP';
+      const divC = document.createElement('div');
+      divC.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
+      menuEl.appendChild(divC);
+      for (const cs of customs) {
+        const isActive = (curLocale2 === cs.id) && isOverlayActive();
+        const badge    = cs.kind === 'mt' ? 'machine' : 'file';
+        menuEl.appendChild(makeCustomRow(cs.label || cs.id, isActive, badge, () => {
+          close();
+          onSelectCustom?.(cs.id);
+        }, () => {
+          close();
+          onRemoveCustom?.(cs.id);
+        }));
+      }
+      const activeCustom = customs.some(c => c.id === curLocale2) && isOverlayActive();
+      if (activeCustom && onAdjustSync) {
+        menuEl.appendChild(makeActionRow('⚙ Adjust sync…', () => {
+          close();
+          onAdjustSync(curLocale2);
+        }));
+      }
+      if (activeCustom && onExport) {
+        menuEl.appendChild(makeActionRow('⬇ Export subtitles…', () => {
+          close();
+          onExport();
+        }));
+      }
+      const translateAction = getTranslateAction?.();
+      if (translateAction && onTranslate) {
+        menuEl.appendChild(makeActionRow(translateAction.label, () => {
+          close();
+          onTranslate();
+        }));
+      }
+      const mtSettingsAction = getMtSettingsAction?.();
+      if (mtSettingsAction && onMtSettings) {
+        menuEl.appendChild(makeActionRow(mtSettingsAction.label, () => {
+          close();
+          onMtSettings();
+        }));
+      }
+      const cancelAction = getCancelAction?.();
+      if (cancelAction && onCancelTranslate) {
+        menuEl.appendChild(makeActionRow(cancelAction.label, () => {
+          close();
+          onCancelTranslate();
+        }));
+      }
+      const clearMtAction = getClearMtAction?.();
+      if (clearMtAction && onClearMt) {
+        menuEl.appendChild(makeActionRow(clearMtAction.label, () => {
+          close();
+          onClearMt();
+        }));
+      }
+      if (onLoadFile) {
+        menuEl.appendChild(makeActionRow('＋ Load subtitle file…', () => {
+          close();
+          onLoadFile();
+        }));
+      }
+
       const div2 = document.createElement('div');
       div2.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
       menuEl.appendChild(div2);
@@ -270,11 +410,21 @@
       }, 0);
     }
 
+    // Show the picker whenever there is at least one source to act on.  It is
+    // the only entry point to "Load subtitle file…", and single-locale episodes
+    // (e.g. a show CR ships with no ja-JP track) are exactly where a user wants
+    // to upload — so the old "hide unless >1 locale" rule would bury the feature.
+    function menuHasContent() {
+      const ep = getEpisode();
+      const versions = ep?.catalog.versions() ?? [];
+      const customs  = ep?.listCustomSources?.() ?? [];
+      return versions.length >= 1 || customs.length > 0;
+    }
+
     function updateButtonVisibility() {
       const menuBtn = document.getElementById(MENU_BTN_ID);
       if (!menuBtn) return;
-      const versions = getEpisode()?.catalog.versions() ?? [];
-      menuBtn.style.display = versions.length > 1 ? '' : 'none';
+      menuBtn.style.display = menuHasContent() ? '' : 'none';
     }
 
     function injectButton(found, afterBtn) {
@@ -307,7 +457,7 @@
         // own left-side player buttons so this control reads consistently.
         marginLeft:   '14px',
         marginRight:  '4px',
-        display:      (getEpisode()?.catalog.versions() ?? []).length > 1 ? '' : 'none',
+        display:      menuHasContent() ? '' : 'none',
       });
 
       menuBtn.addEventListener('mouseenter', () => { menuBtn.style.background = 'rgba(255,107,53,0.15)'; });

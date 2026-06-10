@@ -1,9 +1,9 @@
 /**
  * lib/subtitle-parser.js — pure parsers and color utilities.
  *
- * Both ASS (Advanced SubStation Alpha) and WebVTT inputs return the same
- * Cue shape; the renderer and remaster code consume cue arrays without
- * caring about source format.
+ * ASS (Advanced SubStation Alpha), WebVTT, and SubRip (.srt) inputs all
+ * return the same Cue shape; the renderer and remaster code consume cue
+ * arrays without caring about source format.
  *
  * No DOM, no fetch, no global state.
  *
@@ -63,12 +63,25 @@
     if (bordM)  s.bord         = parseFloat(bordM[1]);
     const shadM  = tagStr.match(/\\shad(\d+(?:\.\d+)?)/);
     if (shadM)  s.shad         = parseFloat(shadM[1]);
-    const frzM   = tagStr.match(/\\frz([-\d.]+)/);
+    // \frz<deg> and its alias \fr<deg> are 2-D (z) rotation.  \frx / \fry are
+    // 3-D rotation (perspective foreshortening) — captured here for detection /
+    // future 3-D rendering; the renderer currently applies only \frz.
+    const frzM   = tagStr.match(/\\fr(?:z)?(-?[\d.]+)/);
     if (frzM)   s.frz          = parseFloat(frzM[1]);
+    const frxM   = tagStr.match(/\\frx(-?[\d.]+)/);
+    if (frxM)   s.frx          = parseFloat(frxM[1]);
+    const fryM   = tagStr.match(/\\fry(-?[\d.]+)/);
+    if (fryM)   s.fry          = parseFloat(fryM[1]);
     const fscxM  = tagStr.match(/\\fscx(\d+(?:\.\d+)?)/);
     if (fscxM)  s.fscx         = parseFloat(fscxM[1]);
     const fscyM  = tagStr.match(/\\fscy(\d+(?:\.\d+)?)/);
     if (fscyM)  s.fscy         = parseFloat(fscyM[1]);
+    // \fax / \fay — X/Y shear factors used (with \fscx/\fscy) to fake the 3-D
+    // perspective slant on typeset signs.  Rendered as CSS skew.
+    const faxM   = tagStr.match(/\\fax(-?[\d.]+)/);
+    if (faxM)   s.fax          = parseFloat(faxM[1]);
+    const fayM   = tagStr.match(/\\fay(-?[\d.]+)/);
+    if (fayM)   s.fay          = parseFloat(fayM[1]);
     const fnM    = tagStr.match(/\\fn([^\\}]+)/);
     if (fnM)    s.fontName     = fnM[1].trim();
     const boldM  = tagStr.match(/\\b([01])/);
@@ -202,6 +215,10 @@
             borderStyle:  base.borderStyle ?? 1,
             fontName:     ov.fontName     ?? base.fontName     ?? null,
             frz:          ov.frz          ?? 0,
+            frx:          ov.frx          ?? 0,
+            fry:          ov.fry          ?? 0,
+            fax:          ov.fax          ?? 0,
+            fay:          ov.fay          ?? 0,
             fscx:         ov.fscx         ?? 100,
             fscy:         ov.fscy         ?? 100,
             bold:         ov.bold         ?? false,
@@ -240,13 +257,43 @@
     return cues;
   }
 
+  // SubRip (.srt).  Same Cue shape as WebVTT — the only structural differences
+  // are the comma decimal separator in timestamps (00:00:01,500 vs .500) and a
+  // leading numeric index line per block.  parseWebVTT slices text from after
+  // the '-->' line, so the index line is naturally dropped; we strip both
+  // <tags> and {ASS override} blocks that fansub SRTs occasionally carry.
+  function parseSRT(text) {
+    const cues   = [];
+    const blocks = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n{2,}/);
+    for (const block of blocks) {
+      const lines = block.trim().split('\n');
+      const tsIdx = lines.findIndex(l => l.includes('-->'));
+      if (tsIdx === -1) continue;
+      const [startRaw, endRaw] = lines[tsIdx].split('-->');
+      const start   = parseTimestamp(startRaw.replace(',', '.'));
+      const end     = parseTimestamp(endRaw.trim().split(/\s+/)[0].replace(',', '.'));
+      const cueText = lines.slice(tsIdx + 1)
+        .map(l => l.replace(/\{[^}]*\}/g, '').replace(/<[^>]+>/g, ''))
+        .join('\n').trim();
+      if (cueText) cues.push({ start, end, text: cueText, ...defaultVttCue() });
+    }
+    return cues;
+  }
+
   function parseSubtitles(text, url) {
     // Strip UTF-8 BOM (﻿) — some CDNs prepend it, which breaks the
     // '[Script Info]' header check and causes ASS files to be mis-parsed as VTT.
     const clean = text.replace(/^﻿/, '');
     const isAss = clean.trimStart().startsWith('[Script Info]') ||
                   /\.(?:ass|ssa)(?:[?#]|$)/i.test(url);
-    const cues = isAss ? parseASS(clean) : parseWebVTT(clean);
+    // SRT vs VTT: VTT carries a 'WEBVTT' header and uses '.' decimals; SRT uses
+    // ',' decimals.  Detect by extension first, then by a comma-decimal cue
+    // timestamp in a file that isn't a WebVTT.
+    const isSrt = !isAss && (
+      /\.srt(?:[?#]|$)/i.test(url) ||
+      (!/^\s*WEBVTT/.test(clean) && /\d{1,2}:\d{2}:\d{2},\d{3}\s*-->/.test(clean))
+    );
+    const cues = isAss ? parseASS(clean) : isSrt ? parseSRT(clean) : parseWebVTT(clean);
     cues.sort((a, b) => a.start - b.start);
     return cues;
   }

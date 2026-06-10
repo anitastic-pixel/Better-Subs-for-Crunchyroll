@@ -33,6 +33,10 @@
     // Source locale, audio dub locale, remaster state).  Updated on
     // source/audio change and on remaster completion.
     ACTIVE_INFO:  'data-cr-active-info',
+    // 'true' when a machine-translation API key is stored.  Set by content.js
+    // from chrome.storage — the KEY itself is never mirrored to the DOM (a page
+    // script could read it); only this derived boolean crosses into MAIN world.
+    MT_CONFIGURED: 'data-cr-mt-configured',
   };
 
   // Values written into ATTR.JP_STATUS by interceptor.js.  The popup reads this
@@ -52,12 +56,20 @@
     GET_STATUS:   'GET_STATUS',       // popup       → content (status query)
     GET_DIAG:     'GET_DIAGNOSTICS',  // popup       → content (issue-report bundle)
     SET_BADGE:    'setBadge',         // content     → background (badge update)
+    MT_TRANSLATE: 'MT_TRANSLATE',     // content     → background (translate a batch)
   };
 
-  // window.postMessage `type` value sent from content.js (isolated world) to
-  // interceptor.js (MAIN world) when the keyboard shortcut fires.
+  // window.postMessage `type` values sent between content.js (isolated world)
+  // and interceptor.js (MAIN world).  CR_SUB_TOGGLE is the keyboard-shortcut
+  // relay; RPC_REQ/RPC_RES are a token-guarded request/response bridge that lets
+  // the MAIN world reach the service worker (which it can't address directly) —
+  // used for machine translation.  Each RPC carries a numeric `id` so concurrent
+  // calls correlate their responses.
   const POST = {
     CR_SUB_TOGGLE: 'CR_SUB_TOGGLE',  // content → MAIN: toggle overlay (token-guarded)
+    RPC_REQ:       'CR_SUB_RPC_REQ', // MAIN    → content: {id, method, payload, token}
+    RPC_RES:       'CR_SUB_RPC_RES', // content → MAIN: {id, ok, result?, error?}
+    SIGN_ASS:      'CR_SUB_SIGN_ASS',// MAIN    → content: {ass, token} — feed libass (signs) or null to clear
   };
 
   const protocol = { ATTR, STATUS, MSG, POST };

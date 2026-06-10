@@ -49,6 +49,14 @@
     7: 'translate(0%,0%)',       8: 'translate(-50%,0%)',     9: 'translate(-100%,0%)',
   };
 
+  // Matching transform-origin so \frz/\fr rotation pivots at the alignment
+  // anchor (the \pos point), the way ASS rotates — not the CSS-default centre.
+  const ALIGN_ORIGIN = {
+    1: '0% 100%',  2: '50% 100%', 3: '100% 100%',
+    4: '0% 50%',   5: '50% 50%',  6: '100% 50%',
+    7: '0% 0%',    8: '50% 0%',   9: '100% 0%',
+  };
+
   const PARSER    = NS.CRSubFix.parser;
   const CUE_STYLE = NS.CRSubFix.cueStyle;
   const { applyAlpha } = PARSER;
@@ -60,10 +68,34 @@
     let lastCueKey = '';
     let resizeHandler = null;
 
-    function calcFontSize(cue, vw, vh) {
-      const scale = getSubScale?.() ?? 1;
+    // Typeset (\pos) signs pass trueSize=true: they render near the EXACT ASS
+    // size (no readability fudge, no user size slider) so they match the video's
+    // native typeset.  CR renders a hair smaller than pure libass, so a tunable
+    // sign factor (default 0.9, crSubFixDebug.signScale(x)) trims it.  Dialogue
+    // keeps the 0.65 readability factor and the user's size preference.
+    function signScale() {
+      try { const v = parseFloat(localStorage.getItem('crSubFix_signscale')); if (v > 0 && v <= 2) return v; } catch (_) {}
+      return 0.9;
+    }
+    // CSS perspective distance (px) for \frx/\fry 3-D rotation.  Scales with the
+    // rendered video height (libass projects in PlayRes space, so the focal
+    // length must scale with the video) — default ≈ 1× video height.  A
+    // localStorage override (the tuning slider) wins, for display-specific dial-in.
+    function signPersp(boxH) {
+      try { const v = parseFloat(localStorage.getItem('crSubFix_persp')); if (v > 0) return v; } catch (_) {}
+      return Math.round((boxH || 1018) * 1.0);
+    }
+    // Live tuning multipliers on the file's transform values (1 = faithful),
+    // driven by the in-player Typeset-tuning sliders (localStorage crSubFix_ts_*).
+    function signTune(key, def) {
+      try { const v = parseFloat(localStorage.getItem('crSubFix_ts_' + key)); if (v >= 0) return v; } catch (_) {}
+      return def;
+    }
+    function calcFontSize(cue, vw, vh, trueSize) {
+      const scale = trueSize ? 1 : (getSubScale?.() ?? 1);
+      const fudge = trueSize ? signScale() : 0.65;
       if (cue.fontSize && cue.playResY) {
-        return `${Math.max(10, Math.round((cue.fontSize / cue.playResY) * vh * 0.65 * scale))}px`;
+        return `${Math.max(8, Math.round((cue.fontSize / cue.playResY) * vh * fudge * scale))}px`;
       }
       return `${Math.round(Math.max(13, Math.min(vw * 0.015, 26)) * scale)}px`;
     }
@@ -137,19 +169,52 @@
       return span;
     }
 
+    // `sc` is the style profile for THIS cue's type — render() passes the sign
+    // profile to positioned cues and the dialogue profile to grouped cues, so a
+    // sign with override off renders native (authored colour + outline).
     function buildLine(text, cue, fz, sc) {
       const useBox = sc.override ? sc.bgBox : (cue.borderStyle === 3);
       if (useBox) return buildBgBoxLine(text, cue, fz, sc);
       return createOutlinedTextSvg(text, resolveLineOpts(cue, fz, sc));
     }
 
+    // Time-aware fades.  The overlay is torn down + rebuilt whenever ANY active
+    // cue changes, so a naive 0→1 fade re-fires on every rebuild and makes all
+    // faded signs flicker in typeset-heavy scenes.  Only animate the fade-in
+    // while the cue is still INSIDE its fade window (resuming from the current
+    // progress); an already-visible cue just renders solid.
     function applyFades(el, cue, currentTime) {
-      if (cue.fadeIn  > 0)
-        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: cue.fadeIn, fill: 'forwards' });
+      if (cue.fadeIn > 0) {
+        const sinceMs = (currentTime - cue.start) * 1000;
+        if (sinceMs < cue.fadeIn) {
+          const from = Math.max(0, Math.min(1, sinceMs / cue.fadeIn));
+          el.animate([{ opacity: from }, { opacity: 1 }],
+                     { duration: Math.max(1, cue.fadeIn - sinceMs), fill: 'forwards' });
+        }
+        // else: past the fade-in window — leave at full opacity (no re-flash).
+      }
       if (cue.fadeOut > 0) {
         const delay = Math.max(0, (cue.end - currentTime) * 1000 - cue.fadeOut);
         el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: cue.fadeOut, delay, fill: 'forwards' });
       }
+    }
+
+    // The displayed video CONTENT box within the overlay, accounting for
+    // letterbox/pillarbox (object-fit: contain).  On a matching aspect (most
+    // 16:9 fullscreen / windowed cases) this is the full overlay — a no-op — so
+    // positioning only changes on non-16:9 displays where bars exist.
+    function videoContentBox(overlay, video) {
+      const w = overlay.offsetWidth, h = overlay.offsetHeight;
+      const vW = video?.videoWidth, vH = video?.videoHeight;
+      if (!vW || !vH || !w || !h) return { x: 0, y: 0, w, h };
+      const elAspect = w / h, vidAspect = vW / vH;
+      if (Math.abs(elAspect - vidAspect) < 0.01) return { x: 0, y: 0, w, h };
+      if (elAspect > vidAspect) {            // bars left/right (pillarbox)
+        const cw = h * vidAspect;
+        return { x: (w - cw) / 2, y: 0, w: cw, h };
+      }
+      const ch = w / vidAspect;              // bars top/bottom (letterbox)
+      return { x: 0, y: (h - ch) / 2, w, h: ch };
     }
 
     // Append a sequence of text lines into `parent`, each wrapped in a
@@ -166,22 +231,44 @@
       }
     }
 
-    function createCueEl(cue, vw, vh, currentTime, sc) {
+    function createCueEl(cue, box, currentTime, sc) {
       const el = document.createElement('div');
       const an = cue.alignment ?? 2;
-      const fz = calcFontSize(cue, vw, vh);
+      const fz = calcFontSize(cue, box.w, box.h, true);  // \pos sign → true ASS size
 
-      const xforms = [ALIGN_XFM[an] ?? ALIGN_XFM[2]];
-      if (cue.frz) xforms.push(`rotate(${cue.frz}deg)`);
+      // ASS is font-space (Y-UP, CCW), CSS is Y-DOWN/CW, so 2-D signs are NEGATED
+      // to match libass: \frz θ ≡ rotate(-θ), \fax f ≡ skewX(-atan f).  \frx/\fry
+      // are true 3-D rotation (perspective foreshortening) — rendered with a
+      // perspective() projection; their signs (and the persp distance) are tuned
+      // visually.  CSS list is evaluated right-to-left, so perspective (leftmost)
+      // projects the fully-rotated geometry last.
+      const has3D = cue.frx || cue.fry;
+      const rotMul = signTune('rot', 1), d3Mul = signTune('3d', 1), skewMul = signTune('skew', 1);
+      const xforms = [];
+      if (has3D) xforms.push(`perspective(${signPersp(box.h)}px)`);
+      xforms.push(ALIGN_XFM[an] ?? ALIGN_XFM[2]);
+      // Rotation order matches ASS (Rz·Ry·Rx — X applied first): list rotateY
+      // BEFORE rotateX so CSS (right-to-left) applies X, then Y, then Z.
+      if (cue.frz) xforms.push(`rotate(${(-cue.frz * rotMul).toFixed(2)}deg)`);
+      if (cue.fry) xforms.push(`rotateY(${(cue.fry * d3Mul).toFixed(2)}deg)`);
+      if (cue.frx) xforms.push(`rotateX(${(-cue.frx * d3Mul).toFixed(2)}deg)`);
+      if (cue.fax) xforms.push(`skewX(${(-Math.atan(cue.fax * skewMul) * 180 / Math.PI).toFixed(2)}deg)`);
+      if (cue.fay) xforms.push(`skewY(${(-Math.atan(cue.fay * skewMul) * 180 / Math.PI).toFixed(2)}deg)`);
 
       Object.assign(el.style, {
         position: 'absolute', pointerEvents: 'none',
         textAlign: 'center',
-        left:      `${cue.pos.x * (vw / (cue.playResX || 640))}px`,
-        top:       `${cue.pos.y * (vh / (cue.playResY || 360))}px`,
+        left:      `${box.x + cue.pos.x * (box.w / (cue.playResX || 640))}px`,
+        top:       `${box.y + cue.pos.y * (box.h / (cue.playResY || 360))}px`,
         transform: xforms.join(' '),
+        transformOrigin: ALIGN_ORIGIN[an] ?? '50% 100%',
         maxWidth:  '90%',
       });
+      // Tag with the source coordinates so crSubFixDebug.geom() can correlate
+      // the rendered box back to the ASS \pos / PlayRes for positioning checks.
+      el.dataset.crpos = `${cue.pos.x},${cue.pos.y}`;
+      el.dataset.crres = `${cue.playResX || 640}x${cue.playResY || 360}`;
+      el.dataset.cran  = String(an);
 
       appendLines(el, cue.text.split('\n'), cue, fz, sc, 'center');
 
@@ -189,24 +276,24 @@
       return el;
     }
 
-    function createGroupEl(an, cues, vw, vh, currentTime, sc) {
+    function createGroupEl(an, cues, box, currentTime, sc) {
       const col   = (an - 1) % 3;
       const row   = Math.floor((an - 1) / 3);
-      const mx    = vw * 0.05;
+      const mx    = box.w * 0.05;
       const first = cues[0];
       const assMy = (first?.marginV != null && first.playResY)
-        ? first.marginV * (vh / first.playResY)
-        : vh * 0.05;
+        ? first.marginV * (box.h / first.playResY)
+        : box.h * 0.05;
       // Bottom-anchored cues (row 0 = numpad alignments 1/2/3) get a
       // user-controlled minimum (popup slider, 0..30 %, default 6) so
       // they clear Crunchyroll's playbar chrome.  Honour ASS-specified
       // marginV when it's larger.  Middle and top rows aren't affected.
       const floorPct    = getSubBottomFloor?.() ?? 6;
-      const bottomFloor = vh * (floorPct / 100);
+      const bottomFloor = box.h * (floorPct / 100);
       const my = row === 0 ? Math.max(assMy, bottomFloor) : assMy;
 
-      const x = col === 0 ? mx : col === 1 ? vw / 2 : vw - mx;
-      const y = row === 0 ? vh - my : row === 1 ? vh / 2 : my;
+      const x = box.x + (col === 0 ? mx : col === 1 ? box.w / 2 : box.w - mx);
+      const y = box.y + (row === 0 ? box.h - my : row === 1 ? box.h / 2 : my);
       const lineAlign = col === 0 ? 'left' : col === 2 ? 'right' : 'center';
 
       const container = document.createElement('div');
@@ -224,12 +311,15 @@
       });
 
       for (const cue of cues) {
-        const fz    = calcFontSize(cue, vw, vh);
+        const fz    = calcFontSize(cue, box.w, box.h);
         const lines = cue.text.split('\n').slice(0, MAX_LINES);
 
         const cueEl = document.createElement('div');
         cueEl.style.textAlign = lineAlign;
-        if (cue.frz) cueEl.style.transform = `rotate(${cue.frz}deg)`;
+        if (cue.frz) {
+          cueEl.style.transform = `rotate(${-cue.frz}deg)`;  // ASS CCW → CSS CW
+          cueEl.style.transformOrigin = ALIGN_ORIGIN[an] ?? '50% 100%';
+        }
 
         appendLines(cueEl, lines, cue, fz, sc, lineAlign);
 
@@ -341,27 +431,33 @@
       if (!overlayEl) return;
       if (cues.length === 0) { overlayEl.style.display = 'none'; return; }
 
-      // Cue-key cache suppresses redundant renders.  Includes the style
-      // context's values so that when settings change (popup → content.js
-      // → data attr → MutationObserver → render) we don't accept the
-      // stale cue-key as identical and skip the repaint.  Object.values
-      // preserves insertion order, and styleCtx is a flat literal built
-      // by captureStyleCtx, so the join is deterministic.
+      // styleCtx is { dialogue, signs } — two flat profiles.  Split them; each
+      // builder gets its own so signs and dialogue style independently.
+      const dlgCtx  = (styleCtx && styleCtx.dialogue) || { override: false };
+      const signCtx = (styleCtx && styleCtx.signs)    || { override: false };
+
+      // Cue-key cache suppresses redundant renders.  Includes BOTH profiles so a
+      // settings change (popup → data attr → MutationObserver → render) busts the
+      // cache and repaints; JSON.stringify of the flat literals is deterministic.
       const cueKey = cues.map(c => `${c.start}:${c.end}`).join('|');
-      const ctxKey = styleCtx ? Object.values(styleCtx).join('|') : '';
+      const ctxKey = styleCtx ? JSON.stringify(styleCtx) : '';
       const key = `${ctxKey}||${cueKey}`;
       if (key === lastCueKey) return;
       lastCueKey = key;
 
       reposition();
-      const vw = overlayEl.offsetWidth  || videoEl?.getBoundingClientRect().width  || window.innerWidth;
-      const vh = overlayEl.offsetHeight || videoEl?.getBoundingClientRect().height || window.innerHeight;
+      // Map cues to the actual displayed video content (handles letterbox /
+      // pillarbox on non-16:9 displays); falls back to the full overlay box.
+      const fbW = overlayEl.offsetWidth  || videoEl?.getBoundingClientRect().width  || window.innerWidth;
+      const fbH = overlayEl.offsetHeight || videoEl?.getBoundingClientRect().height || window.innerHeight;
+      const box = videoContentBox(overlayEl, videoEl);
+      if (!box.w || !box.h) { box.x = 0; box.y = 0; box.w = fbW; box.h = fbH; }
 
       overlayEl.style.display = 'block';
       overlayEl.innerHTML = '';
 
       for (const cue of cues) {
-        if (cue.pos) overlayEl.appendChild(createCueEl(cue, vw, vh, currentTime, styleCtx));
+        if (cue.pos) overlayEl.appendChild(createCueEl(cue, box, currentTime, signCtx));
       }
 
       const byAlignment = {};
@@ -371,7 +467,7 @@
         (byAlignment[an] ??= []).push(cue);
       }
       for (const [an, group] of Object.entries(byAlignment)) {
-        overlayEl.appendChild(createGroupEl(parseInt(an), group, vw, vh, currentTime, styleCtx));
+        overlayEl.appendChild(createGroupEl(parseInt(an), group, box, currentTime, dlgCtx));
       }
     }
 

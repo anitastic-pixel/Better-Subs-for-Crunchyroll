@@ -1,6 +1,6 @@
 # Privacy Policy — Better Subs for Crunchyroll
 
-_Last updated: 2026-06-06_
+_Last updated: 2026-06-07_
 
 **Better Subs for Crunchyroll does not collect, transmit, or sell your data
 automatically.** There are no analytics, no tracking, and no accounts. The one
@@ -16,9 +16,18 @@ All data stays on your own device:
 - **A subtitle cache** is kept in the page's own `localStorage` /
   `sessionStorage` to avoid re-downloading the same subtitle files. Cached
   entries expire automatically (7–30 days depending on the entry).
+- **Custom sources you add** — a subtitle file you upload, or a
+  machine-translated track you generate — are stored in the page's
+  `localStorage`, scoped to that episode, so they survive a reload.
+- **A machine-translation API key**, if you choose to set one up, is stored with
+  the Chrome `storage` API on your device. It is read only by the extension's
+  background worker to call the translation provider, and is never shown to the
+  Crunchyroll page or sent anywhere except that provider.
 
-None of this leaves your browser. Removing the extension (or clearing its data)
-removes all of it.
+None of this leaves your browser, except the machine-translation requests
+described under **Network activity** (which happen only if you set up and use
+that optional feature). Removing the extension (or clearing its data) removes
+all of it.
 
 ## Problem reports you choose to send
 
@@ -26,9 +35,13 @@ The extension transmits nothing on its own. If — and only if — you click the
 on-error "Send a report?" prompt, or the popup's **Send a report** button, a
 small diagnostic bundle is sent to the developer to help fix the bug:
 
-- the extension version and your browser's user-agent string;
-- the current Crunchyroll page URL and recent in-extension activity (which
-  episodes you navigated between and subtitle-loading events);
+- the extension version and a **coarse platform string** (OS family + Chrome
+  major version — e.g. "Windows · Chrome 148"). The full user-agent is
+  **never** sent, at any level;
+- the **episode id** of the page you're on (a public identifier — the title
+  slug is dropped) and recent in-extension activity (subtitle-loading events),
+  with URLs, signed tokens, emails, and long ids redacted before it leaves your
+  device;
 - your extension settings, and an optional note you type.
 
 You can turn the diagnostic details off in the popup (**Include diagnostics**),
@@ -49,15 +62,30 @@ To make those requests it reuses the authorization token your browser is
 solely to call Crunchyroll's playback API on the same origin; it is never
 logged, stored long-term, or sent anywhere other than Crunchyroll.
 
-The only other network destination is the problem-report endpoint described
-above, and only when you choose to send a report.
+The only other network destinations are:
+
+- the problem-report endpoint described above, and only when you choose to send
+  a report;
+- a **machine-translation provider** (DeepL or Google), and only if you set up
+  the optional machine-translation feature and then generate a translated
+  track. In that case the subtitle text being translated is sent — together
+  with your own API key — directly from the extension's background worker to the
+  provider you chose. No translation request is ever made unless you both
+  configure a key and trigger a translation; the text and key go only to that
+  provider, never to the developer.
 
 ## Permissions
 
-- **`storage`** — to save your settings and the subtitle cache (described
-  above). This is the only permission the extension requests.
+- **`storage`** — to save your settings, the subtitle cache, your custom
+  sources, and (if set) your translation API key. This is the only permission
+  requested at install time.
+- **Optional host access to `api-free.deepl.com`, `api.deepl.com`, and
+  `translation.googleapis.com`** — requested only when you enable machine
+  translation, so the background worker can reach the provider. If you never use
+  that feature, it is never requested, and you can revoke it any time from
+  Chrome's extension settings.
 
-The extension runs only on `www.crunchyroll.com` pages.
+The extension's content scripts run only on `www.crunchyroll.com` pages.
 
 ## Third parties
 
@@ -65,6 +93,11 @@ The extension shares no data for advertising or sale. A problem report you
 choose to send is delivered to the developer through a Cloudflare Worker (which
 only relays it) and a private chat channel; these process the report on the
 developer's behalf and for no other purpose.
+
+If you enable machine translation, the subtitle text you translate is sent to
+the provider **you** chose (DeepL or Google) under **your own** API key and
+their terms and privacy policy — a direct relationship between you and that
+provider, with the developer neither involved in nor able to see it.
 
 ## Contact
 

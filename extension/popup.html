@@ -756,9 +756,27 @@
   </div>
 
   <div class="section">
-    <!-- Master override toggle -->
+    <!-- Which subtitle type the controls below edit.  Dialogue and Signs
+         (typeset \pos cues) each keep their own independent style profile. -->
+    <div class="row sm" style="margin-bottom:2px;">
+      <span class="row-label" style="font-size:11px">Style for</span>
+      <div class="seg-ctrl" id="styleTargetSeg">
+        <button class="seg-btn active" data-val="dialogue" data-tip="Edit the look of regular dialogue subtitles.">Dialogue</button>
+        <button class="seg-btn"        data-val="signs"    data-tip="Edit the look of typeset signs (positioned on-screen text). Off by default = match the original.">Signs</button>
+      </div>
+    </div>
+    <!-- Sign text size (signs only): scales the typeset font, independent of the
+         override below — resize signs without changing their colour/look. -->
+    <div class="row col" id="signSizeRow" style="display:none;">
+      <div class="row-header">
+        <div class="row-label">Sign text size</div>
+        <span class="value-label" id="signScaleLabel">100%</span>
+      </div>
+      <input type="range" id="signScaleSlider" min="25" max="250" step="5" value="100" />
+    </div>
+    <!-- Master override toggle (per the selected type) -->
     <div class="row">
-      <div class="row-label">Override subtitle style</div>
+      <div class="row-label" id="toggleStyleOverrideLabel">Override subtitle style</div>
       <label class="toggle">
         <input type="checkbox" id="toggleStyleOverride" />
         <span class="slider"></span>
@@ -793,6 +811,17 @@
           </div>
           <input type="range" id="textOpacity" min="0" max="100" step="5" value="100" />
         </div>
+      </div>
+
+      <!-- Force text colour (signs only): some signs animate their own colour via
+           ASS \t; this strips it so the chosen text colour wins (drops that anim). -->
+      <div class="row sm" id="forceColorRow" style="margin-top:4px;display:none;">
+        <span class="row-label" style="font-size:11px">Force text color
+          <span class="help" tabindex="0" data-tip="Some signs animate their own color (e.g. fading to teal). Turn this on to make your chosen text color win — this drops that color animation.">?</span></span>
+        <label class="toggle">
+          <input type="checkbox" id="toggleForceColor" />
+          <span class="slider"></span>
+        </label>
       </div>
 
       <!-- Outline + Shadow.  Disabled when Background Box is enabled (their
@@ -915,6 +944,44 @@
 
     </div><!-- /styleControls -->
   </div>
+  </details>
+
+  <details>
+    <summary>Machine translation</summary>
+    <div class="row col sm" style="background:transparent;padding:4px 2px;">
+      <div class="row-sub" style="color:#888;line-height:1.5;">
+        Fill in a language Crunchyroll doesn't carry — e.g. Japanese — by machine-translating
+        an existing track. Bring your own <a href="https://www.deepl.com/pro-api" target="_blank" style="color:#9ecbff;">DeepL</a>
+        or <a href="https://cloud.google.com/translate" target="_blank" style="color:#9ecbff;">Google</a> API key.
+        It's stored only on this device and sent only to the provider you choose.
+        <b style="color:#b08cff;">Machine output is an approximation, not authored subtitles.</b>
+      </div>
+
+      <div class="row sm">
+        <span class="row-label" style="font-size:11px">Enable machine translation</span>
+        <label class="toggle"><input type="checkbox" id="toggleMtEnabled" /><span class="slider"></span></label>
+      </div>
+
+      <div class="row sm">
+        <span class="row-label" style="font-size:11px">Provider</span>
+        <select id="mtProvider" style="flex:1;width:auto;margin-left:14px;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:5px 9px;font-size:11px;font-family:inherit;cursor:pointer;">
+          <option value="deepl">DeepL</option>
+          <option value="gemini">Google Gemini (AI — better register)</option>
+        </select>
+      </div>
+
+      <div class="row-sub" style="color:#777;line-height:1.5;margin-top:2px;">
+        Target language &amp; source track are chosen on the player — ▾ source picker →
+        <b style="color:#9ecbff;">⚙ Translation settings</b> — and they're saved per your last choice.
+      </div>
+
+      <input id="mtApiKey" class="report-note" type="password" autocomplete="off" placeholder="Paste your API key" style="margin-top:6px;margin-bottom:4px;" />
+      <button id="mtSave" class="report-btn" type="button">Save &amp; enable</button>
+      <div id="mtStatus" class="row-sub" style="text-align:center;margin-top:5px;min-height:13px;"></div>
+      <div class="row-sub" style="text-align:center;margin-top:2px;">
+        <a id="mtClear" href="#" style="color:#777;text-decoration:underline;">Remove saved key</a>
+      </div>
+    </div>
   </details>
 
   <details>

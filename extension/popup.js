@@ -5,6 +5,9 @@ const toggleHideOfficial  = document.getElementById('toggleHideOfficial');
 const toggleIncludeDiag   = document.getElementById('toggleIncludeDiag');
 const scaleSlider         = document.getElementById('scaleSlider');
 const scaleLabel          = document.getElementById('scaleLabel');
+const signSizeRow         = document.getElementById('signSizeRow');
+const signScaleSlider     = document.getElementById('signScaleSlider');
+const signScaleLabel      = document.getElementById('signScaleLabel');
 const offsetLabel         = document.getElementById('offsetLabel');
 const statusDot           = document.getElementById('statusDot');
 const statusText          = document.getElementById('statusText');
@@ -12,6 +15,8 @@ const offsetReset         = document.getElementById('offsetReset');
 const subBottomFloor      = document.getElementById('subBottomFloor');
 const subBottomFloorLabel = document.getElementById('subBottomFloorLabel');
 // Style override
+const styleTargetSeg      = document.getElementById('styleTargetSeg');
+const toggleStyleOverrideLabel = document.getElementById('toggleStyleOverrideLabel');
 const toggleStyleOverride = document.getElementById('toggleStyleOverride');
 const styleControls       = document.getElementById('styleControls');
 const previewSpan         = document.getElementById('previewSpan');
@@ -39,6 +44,8 @@ const bgPaddingX          = document.getElementById('bgPaddingX');
 const bgPaddingXLabel     = document.getElementById('bgPaddingXLabel');
 const bgPaddingY          = document.getElementById('bgPaddingY');
 const bgPaddingYLabel     = document.getElementById('bgPaddingYLabel');
+const toggleForceColor    = document.getElementById('toggleForceColor');
+const forceColorRow       = document.getElementById('forceColorRow');
 const toggleBgGlass       = document.getElementById('toggleBgGlass');
 const glassControls       = document.getElementById('glassControls');
 const bgGlassBlur         = document.getElementById('bgGlassBlur');
@@ -50,6 +57,13 @@ const bgGlassHueLabel     = document.getElementById('bgGlassHueLabel');
 const presetSelect        = document.getElementById('presetSelect');
 const previewBox          = document.getElementById('previewBox');
 const togglePreviewAnimate = document.getElementById('togglePreviewAnimate');
+// Machine translation
+const toggleMtEnabled     = document.getElementById('toggleMtEnabled');
+const mtProvider          = document.getElementById('mtProvider');
+const mtApiKey            = document.getElementById('mtApiKey');
+const mtSave              = document.getElementById('mtSave');
+const mtStatus            = document.getElementById('mtStatus');
+const mtClear             = document.getElementById('mtClear');
 
 // ── Style presets ─────────────────────────────────────────────────────────
 // Each preset is a partial settings bundle that gets merged on top of the
@@ -254,13 +268,16 @@ function updatePreview() {
     // bg-box mode renders as a styled HTML span — no outline / stroke.
     const alpha  = parseInt(bgOpacity.value) / 100;
     const bgCol  = hexToRgba(bgColor.value, alpha);
-    const radius = parseInt(bgRadius.value);
+    // Signs render through libass: rectangular box, no backdrop-blur glass — so
+    // the sign preview drops radius + glass to match what actually shows.
+    const signs  = styleTarget === 'signs';
+    const radius = signs ? 0 : parseInt(bgRadius.value);
     const px     = parseInt(bgPaddingX.value);
     const pySlider = parseInt(bgPaddingY.value);
     const { paddingY, lineHeight } = resolveBgYInsets(pySlider);
     const span = document.createElement('span');
     let glassCss = '';
-    if (toggleBgGlass.checked) {
+    if (toggleBgGlass.checked && !signs) {
       // Same recipe as the page-side renderer — both call the shared builder
       // in lib/cue-style.js so the preview equals playback.
       glassCss = buildGlassCss({
@@ -295,6 +312,32 @@ function updatePreview() {
 
 // ── Load settings ─────────────────────────────────────────────────────────
 
+// ── Per-type style profiles (dialogue vs typeset signs) ───────────────────
+// The same controls edit either profile; the selected target prefixes the
+// schema keys ('' = dialogue, 'sign_' = signs).  setStyle() routes writes to
+// the active target; styleProfile() projects a settings object onto the active
+// target's values so the populate code can keep reading base key names.
+const STYLE_KEYS = [
+  'styleOverride', 'overrideFontFamily', 'overrideTextColor', 'overrideTextOpacity',
+  'overrideOutlineColor', 'overrideBord', 'overrideShad', 'overrideShadStyle',
+  'overrideShadOpacity', 'overrideBgBox', 'overrideBgColor', 'overrideBgOpacity',
+  'overrideBgRadius', 'overrideBgPaddingX', 'overrideBgPaddingY', 'overrideBgGlass',
+  'overrideBgGlassBlur', 'overrideBgGlassSat', 'overrideBgGlassHue',
+];
+let styleTarget = 'dialogue';   // 'dialogue' | 'signs'
+function setStyle(obj, cb) {
+  if (styleTarget !== 'signs') { chrome.storage.local.set(obj, cb); return; }
+  const out = {};
+  for (const k in obj) out[STYLE_KEYS.includes(k) ? 'sign_' + k : k] = obj[k];
+  chrome.storage.local.set(out, cb);
+}
+function styleProfile(s) {
+  if (styleTarget !== 'signs') return s;
+  const out = Object.assign({}, s);
+  for (const base of STYLE_KEYS) out[base] = s['sign_' + base];
+  return out;
+}
+
 function populateFromSettings(s) {
   toggleEnabled.checked = s.enabled;
   toggleAuto.checked    = s.autoActivate;
@@ -307,52 +350,84 @@ function populateFromSettings(s) {
   subBottomFloor.value         = s.subBottomFloor;
   subBottomFloorLabel.textContent = `${s.subBottomFloor}%`;
 
-  // Style overrides
-  toggleStyleOverride.checked = s.styleOverride;
-  styleControls.classList.toggle('disabled', !s.styleOverride);
+  // Style overrides — read the ACTIVE profile (dialogue or signs).
+  const sp = styleProfile(s);
+  styleTargetSeg?.querySelectorAll('.seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.val === styleTarget);
+  });
+  const styleLabel = (styleTarget === 'signs') ? 'signs' : 'dialogue';
+  if (toggleStyleOverrideLabel) toggleStyleOverrideLabel.textContent =
+    styleTarget === 'signs' ? 'Custom style for signs' : 'Override subtitle style';
 
-  fontFamily.value          = s.overrideFontFamily;
+  toggleStyleOverride.checked = sp.styleOverride;
+  styleControls.classList.toggle('disabled', !sp.styleOverride);
 
-  colorText.value           = s.overrideTextColor;
-  textOpacity.value         = s.overrideTextOpacity;
-  textOpacityLabel.textContent = `${s.overrideTextOpacity}%`;
+  fontFamily.value          = sp.overrideFontFamily;
 
-  colorOutline.value        = s.overrideOutlineColor;
-  bordSlider.value          = s.overrideBord;
-  bordLabel.textContent     = s.overrideBord;
+  colorText.value           = sp.overrideTextColor;
+  textOpacity.value         = sp.overrideTextOpacity;
+  textOpacityLabel.textContent = `${sp.overrideTextOpacity}%`;
 
-  shadSlider.value          = s.overrideShad;
-  shadLabel.textContent     = s.overrideShad;
-  currentShadStyle          = s.overrideShadStyle ?? 'hard';
+  colorOutline.value        = sp.overrideOutlineColor;
+  bordSlider.value          = sp.overrideBord;
+  bordLabel.textContent     = sp.overrideBord;
+
+  shadSlider.value          = sp.overrideShad;
+  shadLabel.textContent     = sp.overrideShad;
+  currentShadStyle          = sp.overrideShadStyle ?? 'hard';
   shadStyleSeg.querySelectorAll('.seg-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.val === currentShadStyle);
   });
-  shadOpacity.value         = s.overrideShadOpacity;
-  shadOpacityLabel.textContent = `${s.overrideShadOpacity}%`;
+  shadOpacity.value         = sp.overrideShadOpacity;
+  shadOpacityLabel.textContent = `${sp.overrideShadOpacity}%`;
 
-  toggleBgBox.checked       = s.overrideBgBox;
-  bgControls.classList.toggle('disabled', !s.overrideBgBox);
-  outlineShadowCtrls.classList.toggle('disabled', s.overrideBgBox);
-  bgColor.value              = s.overrideBgColor;
-  bgOpacity.value            = s.overrideBgOpacity;
-  bgOpacityLabel.textContent = `${s.overrideBgOpacity}%`;
-  bgRadius.value             = s.overrideBgRadius;
-  bgRadiusLabel.textContent  = `${s.overrideBgRadius}px`;
-  bgPaddingX.value           = s.overrideBgPaddingX;
-  bgPaddingXLabel.textContent = `${s.overrideBgPaddingX}px`;
-  bgPaddingY.value           = s.overrideBgPaddingY;
-  bgPaddingYLabel.textContent = `${s.overrideBgPaddingY}px`;
+  toggleBgBox.checked       = sp.overrideBgBox;
+  bgControls.classList.toggle('disabled', !sp.overrideBgBox);
+  outlineShadowCtrls.classList.toggle('disabled', sp.overrideBgBox);
+  bgColor.value              = sp.overrideBgColor;
+  bgOpacity.value            = sp.overrideBgOpacity;
+  bgOpacityLabel.textContent = `${sp.overrideBgOpacity}%`;
+  bgRadius.value             = sp.overrideBgRadius;
+  bgRadiusLabel.textContent  = `${sp.overrideBgRadius}px`;
+  bgPaddingX.value           = sp.overrideBgPaddingX;
+  bgPaddingXLabel.textContent = `${sp.overrideBgPaddingX}px`;
+  bgPaddingY.value           = sp.overrideBgPaddingY;
+  bgPaddingYLabel.textContent = `${sp.overrideBgPaddingY}px`;
 
-  toggleBgGlass.checked      = s.overrideBgGlass;
-  glassControls.classList.toggle('disabled', !s.overrideBgGlass);
-  bgGlassBlur.value          = s.overrideBgGlassBlur;
-  bgGlassBlurLabel.textContent = `${s.overrideBgGlassBlur}px`;
-  bgGlassSat.value           = s.overrideBgGlassSat;
-  bgGlassSatLabel.textContent = `${s.overrideBgGlassSat}%`;
-  bgGlassHue.value           = s.overrideBgGlassHue;
-  bgGlassHueLabel.textContent = `${s.overrideBgGlassHue}°`;
+  toggleBgGlass.checked      = sp.overrideBgGlass;
+  glassControls.classList.toggle('disabled', !sp.overrideBgGlass);
+  // Signs render through libass, which can't do CSS backdrop-blur, so the glass
+  // effect is dialogue-only — hide its row + controls when editing signs.
+  const isSignsType = styleTarget === 'signs';
+  const glassRow = toggleBgGlass.closest('.row');
+  if (glassRow) glassRow.style.display = isSignsType ? 'none' : '';
+  glassControls.style.display          = isSignsType ? 'none' : '';
+  // Force-text-colour is signs-only (CSS dialogue colour always applies anyway).
+  forceColorRow.style.display = isSignsType ? '' : 'none';
+  toggleForceColor.checked    = !!s.sign_forceColor;
+  // Sign text size — signs only, independent of the override toggle.
+  signSizeRow.style.display = isSignsType ? '' : 'none';
+  const signPct = Math.round((Number(s.sign_textScale) || 1) * 100);
+  signScaleSlider.value      = signPct;
+  signScaleLabel.textContent = `${signPct}%`;
+  bgGlassBlur.value          = sp.overrideBgGlassBlur;
+  bgGlassBlurLabel.textContent = `${sp.overrideBgGlassBlur}px`;
+  bgGlassSat.value           = sp.overrideBgGlassSat;
+  bgGlassSatLabel.textContent = `${sp.overrideBgGlassSat}%`;
+  bgGlassHue.value           = sp.overrideBgGlassHue;
+  bgGlassHueLabel.textContent = `${sp.overrideBgGlassHue}°`;
 
-  presetSelect.value = matchingPresetId(s) ?? '';
+  presetSelect.value = matchingPresetId(sp) ?? '';
+
+  // Machine translation selectors (the API key is NOT a schema setting — it's
+  // loaded/saved separately so it never enters the synced settings bundle).
+  if (toggleMtEnabled) toggleMtEnabled.checked = s.mtEnabled !== false;
+  if (mtProvider) {
+    mtProvider.value = s.mtProvider ?? 'deepl';
+    // A stored provider no longer offered (e.g. the removed Google Cloud option)
+    // won't select — fall back to DeepL and persist the correction.
+    if (!mtProvider.value) { mtProvider.value = 'deepl'; chrome.storage.local.set({ mtProvider: 'deepl' }); }
+  }
 
   updatePreview();
 }
@@ -362,6 +437,67 @@ function loadFromStorage() {
 }
 
 loadFromStorage();
+
+// ── Machine translation ───────────────────────────────────────────────────
+// The API key lives in chrome.storage.local read only by the service worker;
+// the popup writes it and requests the provider's optional host permission (on
+// this click — a user gesture, required by chrome.permissions.request).
+let mtHasKey = false;
+
+function mtHostsFor(provider) {
+  if (provider === 'gemini') return ['https://generativelanguage.googleapis.com/*'];
+  return ['https://api-free.deepl.com/*', 'https://api.deepl.com/*'];
+}
+
+function refreshMtStatus() {
+  if (!mtStatus) return;
+  chrome.storage.local.get(['mtApiKey', 'mtProvider'], ({ mtApiKey: key, mtProvider: prov }) => {
+    mtHasKey = !!key;
+    if (mtApiKey) mtApiKey.placeholder = mtHasKey ? 'Key saved — paste to replace' : 'Paste your API key';
+    if (!mtHasKey) { mtStatus.textContent = ''; return; }
+    chrome.permissions.contains({ origins: mtHostsFor(prov || 'deepl') }, (granted) => {
+      if (granted) { mtStatus.textContent = '✓ Enabled — key stored on this device'; mtStatus.style.color = '#16e0a8'; }
+      else         { mtStatus.textContent = '⚠ Click “Save & enable” to grant network access'; mtStatus.style.color = '#cc9900'; }
+    });
+  });
+}
+refreshMtStatus();
+
+toggleMtEnabled?.addEventListener('change', () => {
+  chrome.storage.local.set({ mtEnabled: toggleMtEnabled.checked });
+});
+mtProvider?.addEventListener('change', () => {
+  chrome.storage.local.set({ mtProvider: mtProvider.value });
+  refreshMtStatus();
+});
+
+mtSave?.addEventListener('click', () => {
+  const provider = mtProvider.value;
+  const key      = mtApiKey.value.trim();
+  if (!key && !mtHasKey) {
+    mtStatus.textContent = 'Paste your API key first.';
+    mtStatus.style.color = '#cc9900';
+    return;
+  }
+  // Save the key/provider FIRST, unconditionally — so MT registers as configured
+  // (and the in-player "Translate" row appears) even if the permission prompt is
+  // deferred or denied.  Then request the host permission in the same gesture.
+  const toSet = { mtProvider: provider };
+  if (key) toSet.mtApiKey = key;
+  chrome.storage.local.set(toSet, () => { if (key) mtApiKey.value = ''; });
+  chrome.permissions.request({ origins: mtHostsFor(provider) }, (granted) => {
+    refreshMtStatus();
+    if (!granted) {
+      mtStatus.textContent = '⚠ Key saved — click “Allow” on the permission prompt to enable translation.';
+      mtStatus.style.color = '#cc9900';
+    }
+  });
+});
+
+mtClear?.addEventListener('click', (e) => {
+  e.preventDefault();
+  chrome.storage.local.remove('mtApiKey', () => { mtApiKey.value = ''; refreshMtStatus(); });
+});
 
 // ── Enable / Auto-activate ────────────────────────────────────────────────
 
@@ -384,6 +520,12 @@ scaleSlider.addEventListener('input', () => {
   const pct = parseInt(scaleSlider.value);
   scaleLabel.textContent = `${pct}%`;
   chrome.storage.local.set({ subScale: pct / 100 });
+});
+
+signScaleSlider.addEventListener('input', () => {
+  const pct = parseInt(signScaleSlider.value);
+  signScaleLabel.textContent = `${pct}%`;
+  chrome.storage.local.set({ sign_textScale: pct / 100 });   // signs-only key
 });
 
 // ── Sync offset ───────────────────────────────────────────────────────────
@@ -425,46 +567,56 @@ subBottomFloor.addEventListener('input', () => {
 
 // ── Style override controls ───────────────────────────────────────────────
 
+// Pick which subtitle type the style controls edit; reload them from that
+// type's saved profile.  (Signs default to "match original" = override off.)
+styleTargetSeg?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn || btn.dataset.val === styleTarget) return;
+  styleTarget = btn.dataset.val === 'signs' ? 'signs' : 'dialogue';
+  loadFromStorage();   // re-populates every style control from the new profile
+  updatePreview();
+});
+
 toggleStyleOverride.addEventListener('change', () => {
   const on = toggleStyleOverride.checked;
-  chrome.storage.local.set({ styleOverride: on });
+  setStyle({ styleOverride: on });
   styleControls.classList.toggle('disabled', !on);
   updatePreview();
 });
 
 fontFamily.addEventListener('change', () => {
-  chrome.storage.local.set({ overrideFontFamily: fontFamily.value });
+  setStyle({ overrideFontFamily: fontFamily.value });
   updatePreview();
 });
 
 colorText.addEventListener('input', () => {
-  chrome.storage.local.set({ overrideTextColor: colorText.value });
+  setStyle({ overrideTextColor: colorText.value });
   updatePreview();
 });
 
 textOpacity.addEventListener('input', () => {
   const v = parseInt(textOpacity.value);
   textOpacityLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ overrideTextOpacity: v });
+  setStyle({ overrideTextOpacity: v });
   updatePreview();
 });
 
 colorOutline.addEventListener('input', () => {
-  chrome.storage.local.set({ overrideOutlineColor: colorOutline.value });
+  setStyle({ overrideOutlineColor: colorOutline.value });
   updatePreview();
 });
 
 bordSlider.addEventListener('input', () => {
   const v = parseFloat(bordSlider.value);
   bordLabel.textContent = v;
-  chrome.storage.local.set({ overrideBord: v });
+  setStyle({ overrideBord: v });
   updatePreview();
 });
 
 shadSlider.addEventListener('input', () => {
   const v = parseFloat(shadSlider.value);
   shadLabel.textContent = v;
-  chrome.storage.local.set({ overrideShad: v });
+  setStyle({ overrideShad: v });
   updatePreview();
 });
 
@@ -475,63 +627,68 @@ shadStyleSeg.addEventListener('click', (e) => {
   shadStyleSeg.querySelectorAll('.seg-btn').forEach(b => {
     b.classList.toggle('active', b === btn);
   });
-  chrome.storage.local.set({ overrideShadStyle: currentShadStyle });
+  setStyle({ overrideShadStyle: currentShadStyle });
   updatePreview();
 });
 
 shadOpacity.addEventListener('input', () => {
   const v = parseInt(shadOpacity.value);
   shadOpacityLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ overrideShadOpacity: v });
+  setStyle({ overrideShadOpacity: v });
   updatePreview();
 });
 
 toggleBgBox.addEventListener('change', () => {
   const on = toggleBgBox.checked;
-  chrome.storage.local.set({ overrideBgBox: on });
+  setStyle({ overrideBgBox: on });
   bgControls.classList.toggle('disabled', !on);
   // Outline + Shadow do nothing when the background box is on, so dim them too.
   outlineShadowCtrls.classList.toggle('disabled', on);
   updatePreview();
 });
 
+toggleForceColor.addEventListener('change', () => {
+  // Signs-only key, written directly (setStyle only prefixes STYLE_KEYS).
+  chrome.storage.local.set({ sign_forceColor: toggleForceColor.checked });
+});
+
 bgColor.addEventListener('input', () => {
-  chrome.storage.local.set({ overrideBgColor: bgColor.value });
+  setStyle({ overrideBgColor: bgColor.value });
   updatePreview();
 });
 
 bgOpacity.addEventListener('input', () => {
   const v = parseInt(bgOpacity.value);
   bgOpacityLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ overrideBgOpacity: v });
+  setStyle({ overrideBgOpacity: v });
   updatePreview();
 });
 
 bgRadius.addEventListener('input', () => {
   const v = parseInt(bgRadius.value);
   bgRadiusLabel.textContent = `${v}px`;
-  chrome.storage.local.set({ overrideBgRadius: v });
+  setStyle({ overrideBgRadius: v });
   updatePreview();
 });
 
 bgPaddingX.addEventListener('input', () => {
   const v = parseInt(bgPaddingX.value);
   bgPaddingXLabel.textContent = `${v}px`;
-  chrome.storage.local.set({ overrideBgPaddingX: v });
+  setStyle({ overrideBgPaddingX: v });
   updatePreview();
 });
 
 bgPaddingY.addEventListener('input', () => {
   const v = parseInt(bgPaddingY.value);
   bgPaddingYLabel.textContent = `${v}px`;
-  chrome.storage.local.set({ overrideBgPaddingY: v });
+  setStyle({ overrideBgPaddingY: v });
   updatePreview();
 });
 
 // ── Glass effect ─────────────────────────────────────────────────────────
 toggleBgGlass.addEventListener('change', () => {
   const on = toggleBgGlass.checked;
-  chrome.storage.local.set({ overrideBgGlass: on });
+  setStyle({ overrideBgGlass: on });
   glassControls.classList.toggle('disabled', !on);
   updatePreview();
 });
@@ -539,21 +696,21 @@ toggleBgGlass.addEventListener('change', () => {
 bgGlassBlur.addEventListener('input', () => {
   const v = parseInt(bgGlassBlur.value);
   bgGlassBlurLabel.textContent = `${v}px`;
-  chrome.storage.local.set({ overrideBgGlassBlur: v });
+  setStyle({ overrideBgGlassBlur: v });
   updatePreview();
 });
 
 bgGlassSat.addEventListener('input', () => {
   const v = parseInt(bgGlassSat.value);
   bgGlassSatLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ overrideBgGlassSat: v });
+  setStyle({ overrideBgGlassSat: v });
   updatePreview();
 });
 
 bgGlassHue.addEventListener('input', () => {
   const v = parseInt(bgGlassHue.value);
   bgGlassHueLabel.textContent = `${v}°`;
-  chrome.storage.local.set({ overrideBgGlassHue: v });
+  setStyle({ overrideBgGlassHue: v });
   updatePreview();
 });
 
@@ -611,7 +768,7 @@ presetSelect.addEventListener('change', () => {
   if (!id) return;                 // "Custom" — no-op
   const preset = PRESETS[id];
   if (!preset) return;
-  chrome.storage.local.set(preset.settings, () => {
+  setStyle(preset.settings, () => {
     // Reload UI from storage so every control reflects the new bundle.
     // populateFromSettings also re-runs matchingPresetId, so the dropdown
     // sticks on the chosen preset until the user nudges any slider.
@@ -646,13 +803,27 @@ const reportGithub    = document.getElementById('reportGithub');
 const ISSUES_URL      = 'https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues/new';
 const REPORT_ENDPOINT = (self.CRSubFix.config && self.CRSubFix.config.REPORT_ENDPOINT) || '';
 
+// Coarse, non-identifying platform string (OS family + Chrome major).  We never
+// send the full User-Agent — it's a fingerprinting surface — at any level.
+function coarsePlatform() {
+  const ua = navigator.userAgent || '';
+  let os = 'Unknown';
+  if (/Windows NT/.test(ua)) os = 'Windows';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
+  else if (/CrOS/.test(ua)) os = 'ChromeOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
+  return `${os} · Chrome ${m ? m[1] : '?'}`;
+}
+
 async function buildDiagnostics(full) {
   const lines = [
     'Better Subs for Crunchyroll — debug info',
     `version : ${chrome.runtime.getManifest().version}`,
+    `platform: ${coarsePlatform()}`,
   ];
-  if (!full) { lines.push('(diagnostics off — only version + your note)'); return lines.join('\n'); }
-  lines.push(`browser : ${navigator.userAgent}`);
+  if (!full) { lines.push('(diagnostics minimized — only version + platform + your note)'); return lines.join('\n'); }
   let page = null;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -661,11 +832,15 @@ async function buildDiagnostics(full) {
 
   if (page) {
     const s = page.settings || {};
-    lines.push(`page    : ${page.url || '-'}`);
+    // Just the episode guid (a public id), not the full titled URL.
+    const epm = (page.url || '').match(/\/watch\/([^/?#]+)/);
+    lines.push(`episode : ${epm ? epm[1] : '-'}`);
     lines.push(`state   : jpStatus=${page.jpStatus} active=${page.jpActive} ` +
                `source=${page.activeInfo?.source ?? '-'} audio=${page.activeInfo?.audio ?? '-'}`);
     lines.push(`settings: enabled=${s.enabled} auto=${s.autoActivate} ` +
                `hideOfficial=${s.hideOfficialSubs} styleOverride=${s.styleOverride}`);
+    lines.push(`mt      : configured=${page.mtConfigured ?? '-'} provider=${s.mtProvider} ` +
+               `target=${s.mtTarget} source=${s.mtSource || 'auto'}`);
     lines.push('--- recent activity (most recent last) ---');
     // Keep the most recent trace that fits (headroom reserved for the note + the
     // Worker's ~4000 cap), trimming the oldest lines.

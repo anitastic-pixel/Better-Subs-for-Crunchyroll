@@ -123,6 +123,177 @@
       // can be tested without waiting for a real bug (no-op unless a
       // REPORT_ENDPOINT is configured).
       testReport: () => { if (!DEBUG) return 'Run crSubFixDebug.on() then reload first.'; setTimeout(() => { throw new Error('Better Subs: test report (ignore) #' + Date.now()); }, 0); return 'Test error thrown — watch for the report nudge near the player.'; },
+      // Tune machine-translation throughput live (no reload).  Keys: batch (cues
+      // per request), pace (ms between batches), timeout (ms), ratewait (ms after
+      // a 429), retries.  e.g. crSubFixDebug.mtTune({ batch: 15, pace: 6000 })
+      mtTune: (o = {}) => {
+        const map = { batch: 'crSubFix_mt_batch', pace: 'crSubFix_mt_pace', timeout: 'crSubFix_mt_timeout', ratewait: 'crSubFix_mt_ratewait', retries: 'crSubFix_mt_retries' };
+        try { for (const [k, key] of Object.entries(map)) if (o[k] != null) localStorage.setItem(key, String(o[k])); } catch (_) {}
+        const cur = {}; try { for (const [k, key] of Object.entries(map)) { const v = localStorage.getItem(key); if (v != null) cur[k] = +v; } } catch (_) {}
+        return 'MT tuning = ' + JSON.stringify(cur) + ' — remove the track (✕) and re-translate to apply.';
+      },
+      mtTuneReset: () => { try { ['batch', 'pace', 'timeout', 'ratewait', 'retries'].forEach(k => localStorage.removeItem('crSubFix_mt_' + k)); } catch (_) {} return 'MT tuning reset to defaults.'; },
+      // Positioning diagnostics: dumps the overlay box, the real <video> box, the
+      // intrinsic size, the computed letterbox content box, and where each
+      // positioned (\pos) sign actually landed vs where its coords map to.  Run
+      // during a typeset scene: copy(crSubFixDebug.geom())
+      geom: () => {
+        try {
+          const ov = document.getElementById(OVERLAY_ID);
+          const v  = document.querySelector('video');
+          if (!ov || !v) return 'no overlay/video (activate subtitles first)';
+          const orect = ov.getBoundingClientRect();
+          const vrect = v.getBoundingClientRect();
+          const w = ov.offsetWidth, h = ov.offsetHeight;
+          const vW = v.videoWidth, vH = v.videoHeight;
+          // recompute the content box the renderer uses
+          let box = { x: 0, y: 0, w, h };
+          if (vW && vH && w && h) {
+            const ea = w / h, va = vW / vH;
+            if (Math.abs(ea - va) >= 0.01) {
+              if (ea > va) { const cw = h * va; box = { x: (w - cw) / 2, y: 0, w: cw, h }; }
+              else         { const ch = w / va; box = { x: 0, y: (h - ch) / 2, w, h: ch }; }
+            }
+          }
+          const signs = Array.from(ov.querySelectorAll('[data-crpos]')).map((c) => {
+            const r = c.getBoundingClientRect();
+            const [px, py] = c.dataset.crpos.split(',').map(Number);
+            const [rx, ry] = c.dataset.crres.split('x').map(Number);
+            const expLeft = Math.round(box.x + px * (box.w / (rx || 640)));
+            const expTop  = Math.round(box.y + py * (box.h / (ry || 360)));
+            return {
+              text: (c.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 22),
+              pos: c.dataset.crpos, res: c.dataset.crres, an: c.dataset.cran,
+              styleLeftTop: `${c.style.left},${c.style.top}`,
+              expWithinBox: `${expLeft},${expTop}`,
+              renderedInOverlay: `${Math.round(r.left - orect.left)},${Math.round(r.top - orect.top)} (${Math.round(r.width)}x${Math.round(r.height)})`,
+            };
+          });
+          return JSON.stringify({
+            overlayBox:  `${Math.round(orect.width)}x${Math.round(orect.height)} @(${Math.round(orect.left)},${Math.round(orect.top)})`,
+            videoBox:    `${Math.round(vrect.width)}x${Math.round(vrect.height)} @(${Math.round(vrect.left)},${Math.round(vrect.top)})`,
+            overlayVsVideoOffset: `${Math.round(orect.left - vrect.left)},${Math.round(orect.top - vrect.top)}  size Δ ${Math.round(orect.width - vrect.width)}x${Math.round(orect.height - vrect.height)}`,
+            intrinsic:   `${vW}x${vH}`,
+            offsetWH:    `${w}x${h}`,
+            contentBox:  `x${Math.round(box.x)} y${Math.round(box.y)} ${Math.round(box.w)}x${Math.round(box.h)}`,
+            objectFit:   getComputedStyle(v).objectFit,
+            signs,
+          }, null, 1);
+        } catch (e) { return 'geom error: ' + (e && e.message); }
+      },
+      // Dumps the ACTIVE subtitle file's [Script Info] (PlayRes), [V4+ Styles]
+      // (so we see each style's Alignment), and sample \pos Dialogue lines (their
+      // \an + \pos) — so we can tell whether the parser's res/alignment match
+      // what the file actually says.  Run during a typeset scene.
+      assInfo: () => {
+        try {
+          const ep = currentEp();
+          let raw = ep?.activeSubUrl ? ep.getCachedRawText(ep.activeSubUrl) : null;
+          if (!raw) {
+            for (let i = 0; i < sessionStorage.length; i++) {
+              const k = sessionStorage.key(i);
+              if (k && k.startsWith('crSubFix_raw_')) {
+                const v = sessionStorage.getItem(k);
+                if (v && /\[Script Info\]|Dialogue:/.test(v)) { raw = v; break; }
+              }
+            }
+          }
+          if (!raw) return 'no cached subtitle text — activate a CR subtitle source first';
+          const L = raw.replace(/\r/g, '').split('\n');
+          const out = ['--- [Script Info] ---'];
+          for (const l of L) if (/^(PlayResX|PlayResY|ScriptType|WrapStyle|ScaledBorderAndShadow|LayoutResX|LayoutResY)\s*:/i.test(l)) out.push(l.trim());
+          out.push('--- [V4+ Styles] ---');
+          let inS = false, n = 0;
+          for (const l of L) {
+            if (/^\[.*Styles\]/i.test(l)) { inS = true; continue; }
+            if (/^\[/.test(l)) inS = false;
+            if (inS && /^(Format|Style)\s*:/i.test(l) && n < 8) { out.push(l.trim()); n++; }
+          }
+          out.push('--- Dialogue with \\pos (samples) ---');
+          let d = 0;
+          for (const l of L) if (/^Dialogue:/i.test(l) && /\\pos/i.test(l) && d < 5) { out.push(l.trim().slice(0, 240)); d++; }
+          return out.join('\n');
+        } catch (e) { return 'assInfo error: ' + (e && e.message); }
+      },
+      // Tune the typeset-sign size factor (default 0.9) to match CR exactly.
+      // e.g. crSubFixDebug.signScale(0.85).  Repaints immediately.
+      signScale: (x) => {
+        if (typeof x === 'number' && x > 0 && x <= 2) {
+          try { localStorage.setItem('crSubFix_signscale', String(x)); } catch (_) {}
+          try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
+          return 'Sign scale = ' + x + ' (repainted; default 0.9).';
+        }
+        let cur = 0.9; try { const v = parseFloat(localStorage.getItem('crSubFix_signscale')); if (v) cur = v; } catch (_) {}
+        return 'Sign scale = ' + cur + '. Set with crSubFixDebug.signScale(0.85) — range 0.1–2.';
+      },
+      // Tune the 3-D perspective distance (px) for \frx/\fry signs.  Smaller =
+      // stronger foreshortening.  e.g. crSubFixDebug.persp(250).  Repaints.
+      persp: (x) => {
+        if (typeof x === 'number' && x > 0) {
+          try { localStorage.setItem('crSubFix_persp', String(x)); } catch (_) {}
+          try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
+          return 'Perspective = ' + x + 'px (repainted; default ≈ video height).';
+        }
+        let cur = 'auto(≈video height)'; try { const v = parseFloat(localStorage.getItem('crSubFix_persp')); if (v) cur = v + 'px'; } catch (_) {}
+        return 'Perspective = ' + cur + '. Set with crSubFixDebug.persp(1400) — bigger = flatter/subtler.';
+      },
+      // Opens the in-player Typeset-tuning slider panel (perspective / 3-D / skew
+      // / rotation / size) for dialling the sign transforms in live.
+      tune: () => { try { openTypesetTunePanel(); return 'Typeset tuning panel opened (drag the title to move it).'; } catch (e) { return 'tune error: ' + (e && e.message); } },
+      // Toggle the real-libass (SubtitlesOctopus) sign renderer vs the CSS one.
+      libass: (on) => {
+        if (typeof on === 'boolean') {
+          try { localStorage.setItem('crSubFix_libass', on ? '1' : '0'); } catch (_) {}
+          try { renderer.invalidate(); pushSignLayer(); onTimeUpdate(); } catch (_) {}
+          return 'libass signs = ' + on + (on ? '' : ' (CSS renderer handles signs).');
+        }
+        return 'libass signs = ' + isLibassSigns() + '. crSubFixDebug.libass(false) → CSS renderer; libass(true) → real libass.';
+      },
+      // Comprehensive dump (use copy(crSubFixDebug.signTags())): finds the ACTIVE
+      // episode's cached file by its asset id and dumps ALL its \pos sign lines in
+      // full, lists every cached file, and prints the parsed transform values for
+      // the signs on screen (incl. \frx/\fry).  Reveals any transform we missed.
+      signTags: () => {
+        try {
+          const ep = currentEp();
+          const v  = (typeof videoEl !== 'undefined' && videoEl) || document.querySelector('video');
+          if (!ep || !v) return 'no episode/video';
+          const out = [];
+          let url = ''; try { url = ep.activeSubUrl || ''; } catch (_) {}
+          out.push('activeSub: ' + (url || '(null/custom)'));
+          // asset id e.g. e00367570a00367606jajp — used to find the cached file
+          const am = url.match(/\/([a-z0-9]{12,})\/\d+\/?(?:[^/]*)?$/i) || url.match(/([a-z0-9]{16,})/i);
+          const asset = am ? am[1] : '';
+          out.push('asset: ' + (asset || '(none)'));
+          let off = 0; try { off = getSyncOffset(); } catch (_) {}
+          const active = (ep.cuesAt(v.currentTime, off) || []).filter((c) => c.pos);
+          out.push('-- parsed signs on screen --');
+          for (const c of active) out.push(`  "${(c.text || '').replace(/\s+/g, ' ').slice(0, 30)}" frz=${c.frz} frx=${c.frx} fry=${c.fry} fax=${c.fax} fay=${c.fay} fscx=${c.fscx} fscy=${c.fscy} an=${c.alignment} pos=${c.pos ? c.pos.x + ',' + c.pos.y : '-'}`);
+          // collect every cached file
+          const files = [];
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const k = sessionStorage.key(i);
+            if (k && k.startsWith('crSubFix_raw_')) { const t = sessionStorage.getItem(k); if (t) files.push({ key: k.slice('crSubFix_raw_'.length), text: t }); }
+          }
+          out.push(`-- ${files.length} cached files --`);
+          for (const f of files) {
+            const posN = (f.text.match(/^Dialogue:.*\\pos/gim) || []).length;
+            const isAct = asset && f.key.indexOf(asset) >= 0;
+            out.push(`${isAct ? '>>ACTIVE ' : '  '}${f.key.slice(0, 95)}  (${posN} \\pos)`);
+          }
+          // dump the ACTIVE file's \pos lines in full; else fall back to all files
+          const act = files.filter((f) => asset && f.key.indexOf(asset) >= 0);
+          const tgt = act.length ? act : files;
+          out.push('-- \\pos lines ' + (act.length ? '(ACTIVE file, full)' : '(all files — active not cached)') + ' --');
+          for (const f of tgt) {
+            const lines = f.text.split('\n').filter((l) => /^Dialogue:/i.test(l) && /\\pos/i.test(l));
+            for (const l of lines.slice(0, 60)) out.push('  ' + l.trim().slice(0, 300));
+          }
+          let s = out.join('\n');
+          if (s.length > 16000) s = s.slice(0, 16000) + '\n…(trimmed at 16k)';
+          return s;
+        } catch (e) { return 'signTags error: ' + (e && e.message); }
+      },
       get isOn() { return DEBUG; },
     };
   } catch (_) {}
@@ -144,6 +315,7 @@
   const MANIFEST_RE    = /\/dash\/manifest\.mpd/;
   const LOG            = '[CR Sub Fix]';
   const BTN_ID           = 'cr-jp-cc-btn';
+  const PROGRESS_ID      = 'cr-bsub-progress';
   // OVERLAY_ID is kept here because subSuppression's CSS selectors reference
   // it to exclude our own overlay from the visibility:hidden sweep.  The
   // renderer also uses the same literal — keep them in sync.
@@ -249,23 +421,29 @@
     getEpisode:      () => currentEp(),
     isOverlayActive: () => overlayActive,
     localeLabels:    LOCALE_LABELS,
-    onSelectLocale:  (locale) => {
-      const cur = currentEp();
-      if (!cur) return;
-      if (cur.activeSource() === locale && overlayActive) return;
-      setPendingActivate(false); // explicit selection supersedes any queued click
-      if (queueResolverTimer) { clearTimeout(queueResolverTimer); queueResolverTimer = null; }
-      if (overlayActive) {
-        overlayActive = false;
-        stopSync();
-      }
-      cur.setActiveSource(locale);
-      try { localStorage.setItem(LOCALE_PREF_KEY, locale); } catch (_) {}
-      cur.clearCues();
-      renderer.invalidate();
-      const btn = document.getElementById(BTN_ID);
-      if (btn) handleButtonClick(btn).catch(() => {});
-    },
+    onSelectLocale:  (locale) => selectSource(locale),
+    onSelectCustom:  (id)     => selectSource(id),
+    onLoadFile:      ()       => promptLoadFile(),
+    onRemoveCustom:  (id)     => removeCustomSource(id),
+    onAdjustSync:    (id)     => openSyncPanel(id),
+    onExport:        ()       => exportActiveCustom().catch(e => log.warn('Export error:', e)),
+    // One-click translate using the saved target/source (+ popup provider) — no
+    // re-picking once you're comfortable with your choices.
+    onTranslate:     ()       => translateToTarget(),
+    getTranslateAction: () =>
+      (!_translating && isMtEnabled() && isMtConfigured() && currentEp())
+        ? { label: '🌐 Translate' } : null,
+    // The gear opens the settings panel to change target/source (persisted).
+    onMtSettings:    ()       => openTranslatePanel(),
+    getMtSettingsAction: () =>
+      (!_translating && isMtEnabled() && isMtConfigured() && currentEp())
+        ? { label: '⚙ Translation settings…' } : null,
+    onCancelTranslate: () => cancelTranslate(),
+    getCancelAction: () => _translating ? { label: '⏹ Cancel translation' } : null,
+    onClearMt: () => clearMtTracks(),
+    // Always offered while MT is on (even with zero tracks) — a discoverable way
+    // to drop all machine-translated tracks for this episode.
+    getClearMtAction: () => (isMtEnabled() && isMtConfigured()) ? { label: '🗑 Clear machine translations' } : null,
     onTurnOff: () => {
       setPendingActivate(false); // user explicitly said off — drop any queued click
       if (queueResolverTimer) { clearTimeout(queueResolverTimer); queueResolverTimer = null; }
@@ -276,7 +454,7 @@
         if (btn) setButtonState(btn, 'idle');
         return;
       }
-      overlayActive = false;
+      setOverlayActive(false);
       currentEp()?.setActiveSubUrl(null);
       stopSync();
       syncSubSuppression();   // keep CR subs hidden if "hide official" is on
@@ -290,6 +468,7 @@
   function localeHasContent(locale) {
     const ep = currentEp();
     if (!ep) return false;
+    if (isCustomId(locale)) return ep.getCustomSource(locale) ? true : false;
     if (locale === 'ja-JP') {
       if (ep.jpCaptionUrl || ep.jpSubtitleUrl) return true;
       return ep.jpGuid ? null : false;
@@ -303,6 +482,21 @@
   // momentarily after SPA navigation while a stale fetch is still in flight —
   // silently absorb writes via Episode's internal disposed-guard.
   const getEpisodeGuid = () => window.location.pathname.match(/\/watch\/([^/]+)/)?.[1] ?? null;
+
+  // Coarse, non-identifying platform string (OS family + Chrome major) — we
+  // deliberately never put the full User-Agent (a fingerprinting surface) in a
+  // report.  The episode guid is a public id; we drop the title slug.
+  function coarsePlatform() {
+    const ua = navigator.userAgent || '';
+    let os = 'Unknown';
+    if (/Windows NT/.test(ua)) os = 'Windows';
+    else if (/Mac OS X/.test(ua)) os = 'macOS';
+    else if (/CrOS/.test(ua)) os = 'ChromeOS';
+    else if (/Android/.test(ua)) os = 'Android';
+    else if (/Linux/.test(ua)) os = 'Linux';
+    const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
+    return `${os} · Chrome ${m ? m[1] : '?'}`;
+  }
   const currentEp      = () => EP.current();
 
   // storeSessionSubs is the most-called catalog op below; route through the
@@ -392,6 +586,895 @@
       .replace(/[?&]Key-Pair-Id=[^&]*/i, '') // CloudFront Key-Pair-Id
       .replace(/[~?&]hmac=[^&]*/i, '')       // HMAC param
       .replace(/[?&]$/, '');                 // trailing ? or &
+  }
+
+  // ── Custom sources (uploaded files / machine translation) ─────────────────
+  // A custom source is a non-CR subtitle track attached to the Episode (see
+  // lib/episode.js's registry).  It rides the SAME apply path as a CR locale —
+  // handleButtonClick branches on isCustomId(activeSource) and feeds the
+  // record's cues straight into ep.setOriginalCues, skipping URL fetch.
+  const CUSTOM_LOCAL_ID = 'custom:local';
+  const isCustomId = (id) => typeof id === 'string' && id.startsWith('custom:');
+
+  // Apply a record's stored sync params to its raw cues, producing display cues.
+  // 'linear' (two-point manual sync) and 'anchors' (auto-sync via remaster) are
+  // baked here; the global subOffset slider still applies on top at render time.
+  function applyCustomSync(record) {
+    const src  = record?.srcCues ?? [];
+    const sync = record?.sync ?? { mode: 'none' };
+    if (sync.mode === 'linear' && isFinite(sync.scale) && isFinite(sync.offset)) {
+      return src.map(c => ({
+        ...c,
+        start: c.start * sync.scale + sync.offset,
+        end:   c.end   * sync.scale + sync.offset,
+      }));
+    }
+    if (sync.mode === 'anchors' && Array.isArray(sync.anchors) && sync.anchors.length >= 2) {
+      return remasterCues(src, sync.anchors);
+    }
+    return src.slice();
+  }
+
+  function currentCustomSource() {
+    const ep = currentEp();
+    const id = ep?.activeSource();
+    return (ep && isCustomId(id)) ? ep.getCustomSource(id) : null;
+  }
+
+  // Shared source-selection flow used by both the CR-locale menu rows and the
+  // custom-source rows.  Persists only real locales to the cross-episode
+  // preference — custom ids are per-episode and must not leak into it.
+  // force=true re-applies even when the id is unchanged — needed when a custom
+  // source's *content* changed under a stable id (e.g. re-uploading a file into
+  // the single 'custom:local' slot while it's the active source).
+  function selectSource(locale, force) {
+    const cur = currentEp();
+    if (!cur) return;
+    if (!force && cur.activeSource() === locale && overlayActive) return;
+    setPendingActivate(false); // explicit selection supersedes any queued click
+    if (queueResolverTimer) { clearTimeout(queueResolverTimer); queueResolverTimer = null; }
+    if (overlayActive) {
+      setOverlayActive(false);
+      stopSync();
+    }
+    cur.setActiveSource(locale);
+    if (!isCustomId(locale)) {
+      try { localStorage.setItem(LOCALE_PREF_KEY, locale); } catch (_) {}
+    }
+    cur.clearCues();
+    renderer.invalidate();
+    const btn = document.getElementById(BTN_ID);
+    if (btn) handleButtonClick(btn).catch(() => {});
+  }
+
+  // ── Load a local subtitle file ────────────────────────────────────────────
+  // Everything stays in the page (MAIN world): a hidden <input type=file> read
+  // via File.text(), parsed by the shared parser, registered on the Episode,
+  // then selected through the normal apply path.  No cross-world plumbing.
+  let _fileInput = null;
+  function promptLoadFile() {
+    if (!currentEp()) return;
+    if (!_fileInput) {
+      _fileInput = document.createElement('input');
+      _fileInput.type   = 'file';
+      _fileInput.accept = '.ass,.ssa,.srt,.vtt,text/plain';
+      _fileInput.style.display = 'none';
+      document.documentElement.appendChild(_fileInput);
+      _fileInput.addEventListener('change', () => {
+        const file = _fileInput.files && _fileInput.files[0];
+        _fileInput.value = '';  // allow re-picking the same file later
+        if (file) ingestSubtitleFile(file).catch(err => {
+          log.error('Subtitle file load failed:', err);
+          showErrorToast('Could not read that subtitle file.');
+        });
+      });
+    }
+    _fileInput.click();
+  }
+
+  async function ingestSubtitleFile(file) {
+    const ep = currentEp();
+    if (!ep) return;
+    let text;
+    try { text = await file.text(); }
+    catch (err) { showErrorToast('Could not read that subtitle file.'); return; }
+    const cues = parseSubtitles(text, file.name);
+    if (!cues.length) {
+      log.warn(`Uploaded file [${file.name}] parsed to 0 cues.`);
+      showErrorToast('No subtitles found in that file.');
+      return;
+    }
+    log.info(`Loaded local subtitle file [${file.name}] — ${cues.length} cues.`);
+    ep.addCustomSource({
+      id:      CUSTOM_LOCAL_ID,
+      kind:    'local',
+      label:   file.name.replace(/\.[^.]+$/, '').slice(0, 40) || 'Uploaded file',
+      lang:    null,
+      srcCues: cues,
+      sync:    { mode: 'none' },
+    });
+    sourceMenu.updateButtonVisibility();
+    // force=true: re-uploading replaces the same 'custom:local' slot, so the id
+    // may be unchanged while the cues changed — bypass selectSource's same-id
+    // short-circuit to apply the new file's cues live.
+    selectSource(CUSTOM_LOCAL_ID, true);
+  }
+
+  function removeCustomSource(id) {
+    const ep = currentEp();
+    if (!ep) return;
+    const wasActive = ep.activeSource() === id;
+    ep.removeCustomSource(id);
+    if (wasActive) {
+      if (overlayActive) { setOverlayActive(false); stopSync(); }
+      ep.setActiveSource(null);
+      ep.clearCues();
+      renderer.invalidate();
+      const btn = document.getElementById(BTN_ID);
+      if (btn) setButtonState(btn, 'idle');
+      setJpStatus(PROTOCOL.STATUS.READY);
+      updateActiveInfo();
+    }
+    sourceMenu.updateButtonVisibility();
+  }
+
+  // Drop every machine-translated track on this Episode (uploads are left
+  // alone).  Offered as a menu action even when there are none, so it's a
+  // discoverable reset; reuses removeCustomSource so active-track deactivation
+  // is handled.
+  function clearMtTracks() {
+    const ep = currentEp();
+    if (!ep) return;
+    const mtIds = ep.listCustomSources().filter(s => s.kind === 'mt').map(s => s.id);
+    for (const id of mtIds) removeCustomSource(id);
+    clearMtPartials(ep.guid);  // also drop any in-progress/resumable partials
+    UI.showToast({
+      host: toastHost(),
+      text: mtIds.length
+        ? `Cleared ${mtIds.length} machine translation${mtIds.length > 1 ? 's' : ''}`
+        : 'No machine translations to clear',
+      duration: 2800,
+    });
+  }
+
+  // Best-effort auto-sync: anchor an upload's cues against an available CR track
+  // of the SAME language (text-matching only works within a language, and
+  // normalizeSubText strips non-latin scripts — so this lands for latin-script
+  // fansubs but not JP-on-JP, which falls back to manual two-point sync).  Runs
+  // silently; only a success retimes the track and toasts.
+  async function maybeAutoSyncCustom(record) {
+    const ep = currentEp();
+    if (!ep || ep.getCustomSource(record.id) !== record) return;
+    if (record.sync && record.sync.mode && record.sync.mode !== 'none') return;
+
+    // Anchoring matches on normalizeSubText, which strips non-latin scripts.
+    // A Japanese (or other non-latin) upload yields no matchable lines, so skip
+    // the reference fetches entirely and leave it to manual two-point sync —
+    // this is the common "fill the missing JP track" case.
+    const latinLines = record.srcCues.reduce(
+      (n, c) => n + (normalizeSubText(c.text).length >= 8 ? 1 : 0), 0);
+    if (latinLines < MIN_ANCHORS) return;
+
+    const cands = [];
+    const seen  = new Set();
+    const push  = (lang, url) => { if (url && !seen.has(subUrlBase(url))) { seen.add(subUrlBase(url)); cands.push({ lang, url }); } };
+    push('ja-JP', ep.jpCaptionUrl || ep.jpSubtitleUrl);
+    const audio = ep.catalog.currentAudio();
+    if (audio) push(audio, getSubtitleUrl(audio));
+    push('en-US', getSubtitleUrl('en-US'));
+
+    let best = null;
+    for (const c of cands) {
+      const refCues = await fetchAndParseSubs(c.url);
+      if (!refCues.length) continue;
+      const anchors = buildAnchorMap(record.srcCues, refCues);
+      if (anchors.length >= MIN_ANCHORS && (!best || anchors.length > best.anchors.length)) {
+        best = { anchors, lang: c.lang };
+      }
+    }
+    if (!best) return;  // cross-language upload — manual sync only
+
+    ep.setCustomSourceSync(record.id, { mode: 'anchors', anchors: best.anchors, bridge: best.lang });
+    if (ep.activeSource() === record.id && overlayActive) {
+      ep.setOriginalCues(applyCustomSync(ep.getCustomSource(record.id)));
+      renderer.invalidate();
+      onTimeUpdate();
+    }
+    const delta = computeMedianDelta(best.anchors);
+    log.info(`Upload auto-synced via [${best.lang}] — ${best.anchors.length} anchors, median ${delta.toFixed(1)}s.`);
+    UI.showToast({
+      host: toastHost(),
+      text: `Auto-synced to video (${delta >= 0 ? '+' : ''}${delta.toFixed(1)}s)`,
+      duration: 4000,
+    });
+  }
+
+  // ── Export a custom source to a file ──────────────────────────────────────
+  // Saves an uploaded/translated track out as SRT — for sharing, or (for machine
+  // translation) proofreading.  MT exports are BILINGUAL: each cue carries the
+  // translation followed by its original source line, so accuracy is easy to
+  // check.  Generated entirely client-side; nothing is uploaded anywhere.
+  function srtTime(t) {
+    const ms  = Math.max(0, Math.round((t || 0) * 1000));
+    const p2  = (n) => String(n).padStart(2, '0');
+    return `${p2(Math.floor(ms / 3600000))}:${p2(Math.floor((ms % 3600000) / 60000))}:` +
+           `${p2(Math.floor((ms % 60000) / 1000))},${String(ms % 1000).padStart(3, '0')}`;
+  }
+  function cuesToSrt(cues, bilingual) {
+    const out = [];
+    for (let i = 0; i < cues.length; i++) {
+      const c = cues[i];
+      const body = (bilingual && c.srcText) ? `${c.text}\n${c.srcText}` : (c.text || '');
+      out.push(`${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${body}`);
+    }
+    return out.join('\n\n') + '\n';
+  }
+  function downloadText(filename, text) {
+    try {
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      const a   = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.documentElement.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      log.warn('Export failed:', e);
+      showErrorToast('Could not export the file.');
+    }
+  }
+  async function exportActiveCustom() {
+    const ep = currentEp();
+    const record = currentCustomSource();
+    if (!ep || !record) return;
+    let cues = applyCustomSync(record);  // export with the user's sync baked in
+    if (!cues.length) { showErrorToast('Nothing to export.'); return; }
+    let bilingual = cues.some(c => c.srcText);
+    // MT track without stored source text (made before bilingual support, or just
+    // to avoid re-spending quota) — pair the cached translation with the CR source
+    // track BY INDEX.  The translation was built 1:1 from that track, so a fresh
+    // fetch lines up — giving a bilingual export with NO DeepL call (no rate limit).
+    if (record.kind === 'mt' && !bilingual) {
+      const srcLoc  = record.mtSource || pickMtSourceLocale(ep, record.lang);
+      const srcCues = srcLoc ? await fetchCuesForLocale(ep, srcLoc) : null;
+      if (ep.disposed) return;
+      if (srcCues && srcCues.length === cues.length) {
+        cues = cues.map((c, k) => ({ ...c, srcText: srcCues[k].text }));
+        bilingual = true;
+      } else if (srcCues) {
+        log.warn(`Export: source [${srcLoc}] has ${srcCues.length} cues vs ${cues.length} — can't pair, exporting JP only.`);
+      }
+    }
+    const base = (record.label || 'subtitles').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 60).trim() || 'subtitles';
+    downloadText(`${base}${bilingual ? '-bilingual' : ''}.srt`, cuesToSrt(cues, bilingual));
+    log.info(`Exported ${cues.length} cues${bilingual ? ' (bilingual)' : ''} as SRT.`);
+    UI.showToast({
+      host: toastHost(),
+      text: bilingual ? 'Exported bilingual SRT — translation + source' : 'Exported SRT',
+      duration: 3500,
+    });
+  }
+
+  // ── Two-point manual sync panel ───────────────────────────────────────────
+  // For cross-language uploads (the common JP-fill case), text-anchoring can't
+  // bridge languages, so the user aligns by hand: seek to where the first line
+  // should appear and mark it, then the last line.  Two (rawTime → videoTime)
+  // pairs define a linear map (scale + offset) that corrects both a constant
+  // offset and a framerate/runtime stretch.  A ±0.1 s nudge fine-tunes after.
+  const SYNC_PANEL_ID = 'cr-bsub-sync-panel';
+  let _syncEscHandler = null;
+
+  function closeSyncPanel() {
+    document.getElementById(SYNC_PANEL_ID)?.remove();
+    if (_syncEscHandler) { document.removeEventListener('keydown', _syncEscHandler); _syncEscHandler = null; }
+  }
+
+  function syncBtn(label, accent) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    Object.assign(b.style, {
+      background: accent ? '#ff6b35' : 'transparent',
+      color:      accent ? '#fff' : '#e0e0e0',
+      border:     `1px solid ${accent ? '#ff6b35' : 'rgba(255,255,255,0.25)'}`,
+      borderRadius: '4px', padding: '4px 9px', fontSize: '12px',
+      fontFamily: 'sans-serif', cursor: 'pointer', flexShrink: '0',
+    });
+    return b;
+  }
+
+  function openSyncPanel(id) {
+    const ep = currentEp();
+    if (!ep || !videoEl) return;
+    const record = ep.getCustomSource(id);
+    if (!record || !record.srcCues.length) return;
+    closeSyncPanel();
+
+    const src      = record.srcCues;
+    const firstRaw = src[0].start;
+    const lastRaw  = src[src.length - 1].start;
+
+    // Seed marks from any existing linear sync so reopening reflects current state.
+    let markA = null, markB = null;
+    if (record.sync?.mode === 'linear' && isFinite(record.sync.scale)) {
+      markA = firstRaw * record.sync.scale + record.sync.offset;
+      markB = lastRaw  * record.sync.scale + record.sync.offset;
+    }
+
+    const fmtT    = t => t == null ? '—' : `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const preview = s => { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > 34 ? t.slice(0, 34) + '…' : t; };
+
+    function reapply() {
+      if (ep.activeSource() === record.id && overlayActive) {
+        ep.setOriginalCues(applyCustomSync(ep.getCustomSource(record.id)));
+        renderer.invalidate();
+        onTimeUpdate();
+      }
+    }
+    function applyLinear(scale, offset) {
+      ep.setCustomSourceSync(record.id, { mode: 'linear', scale, offset });
+      reapply();
+    }
+    function recompute() {
+      if (markA != null && markB != null && Math.abs(lastRaw - firstRaw) >= 1) {
+        const scale  = (markB - markA) / (lastRaw - firstRaw);
+        const offset = markA - firstRaw * scale;
+        applyLinear(scale, offset);
+      } else if (markA != null) {
+        applyLinear(1, markA - firstRaw);  // offset-only until the end is marked
+      }
+      refresh();
+    }
+    function nudge(delta) {
+      const cur    = ep.getCustomSource(record.id)?.sync;
+      const scale  = cur?.mode === 'linear' && isFinite(cur.scale) ? cur.scale : 1;
+      const offset = (cur?.mode === 'linear' ? cur.offset : 0) + delta;
+      applyLinear(scale, offset);
+      markA = firstRaw * scale + offset;
+      markB = lastRaw  * scale + offset;
+      refresh();
+    }
+    function reset() {
+      ep.setCustomSourceSync(record.id, { mode: 'none' });
+      markA = markB = null;
+      reapply();
+      refresh();
+    }
+
+    const panel = document.createElement('div');
+    panel.id = SYNC_PANEL_ID;
+    Object.assign(panel.style, {
+      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
+      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '12px 14px',
+      width: '320px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
+    });
+    panel.innerHTML =
+      `<div style="font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:2px;">Adjust sync</div>` +
+      `<div style="font-size:11px;color:#9aa;line-height:1.4;margin-bottom:10px;">` +
+        `Seek the video to where each line should appear, then mark it. Two points correct both offset and speed.</div>` +
+      `<div style="font-size:11px;color:#888;margin:4px 0 2px;">First line<span style="color:#bbb;"> · "${escapeHtml(preview(src[0].text))}"</span></div>` +
+      `<div data-row="a" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"></div>` +
+      `<div style="font-size:11px;color:#888;margin:4px 0 2px;">Last line<span style="color:#bbb;"> · "${escapeHtml(preview(src[src.length - 1].text))}"</span></div>` +
+      `<div data-row="b" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"></div>` +
+      `<div data-row="nudge" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"></div>` +
+      `<div data-row="foot" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;"></div>`;
+
+    const setA   = syncBtn('Mark now');
+    const setB   = syncBtn('Mark now');
+    const lblA   = document.createElement('span'); lblA.style.cssText = 'font-size:12px;color:#9ecbff;min-width:42px;';
+    const lblB   = document.createElement('span'); lblB.style.cssText = 'font-size:12px;color:#9ecbff;min-width:42px;';
+    const minus  = syncBtn('−0.1s');
+    const plus   = syncBtn('+0.1s');
+    const shiftL = document.createElement('span'); shiftL.style.cssText = 'font-size:11px;color:#888;';
+    const resetB = syncBtn('Reset');
+    const doneB  = syncBtn('Done', true);
+
+    panel.querySelector('[data-row="a"]').append(setA, lblA);
+    panel.querySelector('[data-row="b"]').append(setB, lblB);
+    panel.querySelector('[data-row="nudge"]').append(shiftL, minus, plus);
+    panel.querySelector('[data-row="foot"]').append(resetB, doneB);
+
+    function refresh() {
+      lblA.textContent = fmtT(markA);
+      lblB.textContent = fmtT(markB);
+      const cur = ep.getCustomSource(record.id)?.sync;
+      shiftL.textContent = cur?.mode === 'linear'
+        ? `shift ${cur.offset >= 0 ? '+' : ''}${cur.offset.toFixed(1)}s · ${cur.scale.toFixed(3)}×`
+        : 'no sync applied';
+    }
+
+    setA.addEventListener('click',  () => { markA = videoEl.currentTime; recompute(); });
+    setB.addEventListener('click',  () => { markB = videoEl.currentTime; recompute(); });
+    minus.addEventListener('click', () => nudge(-0.1));
+    plus.addEventListener('click',  () => nudge(+0.1));
+    resetB.addEventListener('click', reset);
+    doneB.addEventListener('click', closeSyncPanel);
+    refresh();
+
+    const mountTarget = document.fullscreenElement ?? videoEl.parentElement ?? document.body;
+    if (mountTarget !== document.body && window.getComputedStyle(mountTarget).position === 'static') {
+      mountTarget.style.position = 'relative';
+    }
+    mountTarget.appendChild(panel);
+    panel.style.left = '50%';
+    panel.style.bottom = '14%';
+    panel.style.transform = 'translateX(-50%)';
+
+    _syncEscHandler = (e) => { if (e.key === 'Escape') closeSyncPanel(); };
+    setTimeout(() => document.addEventListener('keydown', _syncEscHandler), 0);
+  }
+
+  // ── Machine translation (BYOK) ────────────────────────────────────────────
+  // The MAIN world can't reach the service worker, so translation rides a
+  // token-guarded RPC over postMessage: interceptor → content.js → SW → DeepL/
+  // Google.  The user's key never enters this world; the SW attaches it.  A
+  // translated track becomes a kind:'mt' custom source — its timing comes from
+  // the source CR track (already on the current cut), so no sync is needed, and
+  // persisting it via the registry means re-selecting later costs no quota.
+  let _rpcSeq = 0;
+  const _rpcPending = new Map();
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
+    const d = event.data;
+    if (!d || d.type !== PROTOCOL.POST.RPC_RES) return;
+    const finish = _rpcPending.get(d.id);
+    if (finish) { _rpcPending.delete(d.id); finish(d); }
+  });
+  function rpc(method, payload, timeoutMs = 30000) {
+    return new Promise((resolve) => {
+      const id = ++_rpcSeq;
+      let done = false;
+      const finish = (d) => { if (done) return; done = true; clearTimeout(timer); resolve(d); };
+      const timer = setTimeout(() => { _rpcPending.delete(id); finish({ ok: false, error: 'timeout' }); }, timeoutMs);
+      _rpcPending.set(id, finish);
+      window.postMessage({ type: PROTOCOL.POST.RPC_REQ, id, method, payload, token: TOGGLE_TOKEN }, window.location.origin);
+    });
+  }
+
+  function mtErrorText(code) {
+    if (code === 'no-key')         return 'Add a translation API key in the extension popup.';
+    if (code === 'timeout')        return 'Translation timed out — check your connection and try again.';
+    if (/403|401/.test(code || '')) return 'Translation rejected — check your API key.';
+    if (/429/.test(code || '')) {
+      return /per day|\bday\b/i.test(code)
+        ? 'Daily free quota reached — resets ~midnight Pacific. Switch to DeepL or try tomorrow.'
+        : 'Rate limited — wait a minute and retry (free tiers are strict).';
+    }
+    if (/456/.test(code || ''))     return 'Translation quota reached for your key.';
+    return 'Translation failed — see the popup to check your key.';
+  }
+
+  // Choose the best CR track to translate FROM: the user's pref, else English,
+  // else the active dub, else JP, else anything — never the target itself.
+  function pickMtSourceLocale(ep, target) {
+    const usable = (loc) => loc && loc !== target && localeHasContent(loc) !== false;
+    const pref = getMtSourcePref();
+    if (usable(pref)) return pref;
+    for (const loc of ['en-US', 'en-GB', ep.catalog.currentAudio(), 'ja-JP']) {
+      if (usable(loc)) return loc;
+    }
+    for (const v of ep.catalog.versions()) if (usable(v.locale)) return v.locale;
+    return null;
+  }
+
+  // Resolve a CR locale to render-ready cues, lazily fetching its session/URL the
+  // same way the activation path does.
+  async function fetchCuesForLocale(ep, locale) {
+    let url;
+    if (locale === 'ja-JP') {
+      url = ep.jpCaptionUrl || ep.jpSubtitleUrl;
+      if (!url) {
+        const g = ep.jpGuid ?? ep.getMappedJpGuid?.();
+        if (g && ep.authHeaders) {
+          const d = await fetchAndCacheJpData(g, ep.authHeaders);
+          url = d?.captionUrl || d?.subtitleUrl || null;
+        }
+      }
+    } else {
+      url = getSubtitleUrl(locale);
+      if (!url) {
+        const v = ep.catalog.versions().find(v => v.locale === locale);
+        if (v?.guid) {
+          const r = await fetchSubUrlForSource(v.guid, locale, ep.authHeaders);
+          url = r.url ?? getSubtitleUrl(locale);
+        }
+      }
+    }
+    if (!url) return null;
+    const cues = await fetchAndParseSubs(url);
+    return cues.length ? cues : null;
+  }
+
+  // Partial-progress cache: every batch's translations are persisted keyed by
+  // (guid, source, target, provider), so a transient rate-limit, a cancel, or a
+  // tab close never re-spends quota on cues already done — a re-run RESUMES from
+  // where it stopped.  This is what makes translation a reliable "click once and
+  // it converges" operation instead of an all-or-nothing gamble.
+  const MT_PARTIAL_TTL = 24 * 60 * 60 * 1000;
+  const mtPartialKey = (guid, source, target, provider) =>
+    `crSubFix_mtpart_${guid}_${source}_${target}_${provider}`;
+  function clearMtPartials(guid) {
+    try {
+      const pfx = `crSubFix_mtpart_${guid}_`;
+      const hits = [];
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(pfx)) hits.push(k); }
+      hits.forEach(k => STORAGE.lsDel(k));
+    } catch (_) {}
+  }
+
+  let _translating     = false;
+  let _translateCancel = false;
+  function cancelTranslate() { if (_translating) _translateCancel = true; }
+
+  // opts = { target, provider, source } — explicit overrides from the Translate
+  // panel; each falls back to the popup-configured default / auto source.
+  async function translateToTarget(opts) {
+    const ep = currentEp();
+    if (!ep) return;
+    if (_translating) return;  // already running — ignore re-trigger
+    if (!isMtEnabled() || !isMtConfigured()) {
+      showErrorToast('Set up and enable machine translation in the extension popup first.');
+      return;
+    }
+    const target   = (opts && opts.target)   || getMtTarget();
+    const provider = (opts && opts.provider) || getMtProvider();
+    const id       = mtId(target, provider);
+    const tLabel   = mtLangLabel(target);
+    const pLabel   = MT_PROVIDER_LABELS[provider] ?? provider;
+
+    // Already generated for this episode+target+provider → just select it.
+    if (ep.getCustomSource(id)) { selectSource(id); return; }
+
+    const source = (opts && opts.source) || pickMtSourceLocale(ep, target);
+    if (!source) { showErrorToast('No subtitle track available to translate from.'); return; }
+    const sLabel = LOCALE_LABELS[source] ?? source;
+
+    const hud = UI.makeProgressHud(toastHost());
+    hud.html(`<span style="color:#ff6b35;font-weight:700;">⟳ Translating ${escapeHtml(sLabel)} → ${escapeHtml(tLabel)}</span>` +
+             `<div style="color:rgba(255,255,255,0.5);font-size:10px;margin-top:3px;">loading source subtitles…</div>`);
+
+    const cues = await fetchCuesForLocale(ep, source);
+    if (ep.disposed) { hud.fade(); return; }
+    if (!cues || !cues.length) {
+      hud.fade();
+      showErrorToast('Could not load the source subtitles to translate.');
+      return;
+    }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const TUNE  = mtTuning(provider);
+    const BATCH = TUNE.batch;
+    const PACE  = TUNE.pace;
+    const texts = cues.map(c => c.text);
+    const out   = new Array(texts.length);
+
+    // Resume any saved partial progress for this exact (guid,source,target,provider).
+    const partKey = mtPartialKey(ep.guid, source, target, provider);
+    const saved   = STORAGE.lsGet(partKey);
+    let resumed = 0;
+    if (Array.isArray(saved) && saved.length === texts.length) {
+      for (let i = 0; i < texts.length; i++) if (saved[i] != null) { out[i] = saved[i]; resumed++; }
+    }
+    const todo = [];
+    for (let i = 0; i < texts.length; i++) if (out[i] == null) todo.push(i);
+
+    log.info(`Translate cfg: provider=${provider} batch=${BATCH} pace=${PACE}ms timeout=${TUNE.timeout}ms ` +
+             `rateWait=${TUNE.rateWait}ms retries=${TUNE.retries} cues=${cues.length} resumed=${resumed} todo=${todo.length}`);
+
+    _translating = true;
+    _translateCancel = false;
+    let done = resumed;
+    setTranslateProgress(done, texts.length);
+    try {
+      for (let b = 0; b < todo.length; b += BATCH) {
+        if (_translateCancel) {
+          hud.html(`<span style="color:#ffc107;">⏸</span>  Paused — ${done}/${texts.length} saved (click Translate to resume)`, 5000);
+          hideTranslateProgress();
+          return;
+        }
+        const idxs  = todo.slice(b, b + BATCH);
+        const batch = idxs.map(i => texts[i]);
+        let res, attempt = 0;
+        for (;;) {
+          hud.update(done, texts.length, attempt ? `rate limited — retry ${attempt}…` : `translating via ${escapeHtml(sLabel)}`);
+          res = await rpc('translate', { texts: batch, source, target }, TUNE.timeout);
+          if (ep.disposed) { hideTranslateProgress(); return; }
+          if (_translateCancel) { hud.html(`<span style="color:#ffc107;">⏸</span>  Paused — ${done}/${texts.length} saved (click Translate to resume)`, 5000); hideTranslateProgress(); return; }
+          if (res.ok && Array.isArray(res.translations) && res.translations.length === batch.length) break;
+          // A dead content↔worker bridge (extension reloaded under an open tab,
+          // or the SW still waking) is usually transient — RETRY it first; only
+          // a bridge that's STILL dead after all retries gets the recovery
+          // reload.  count-mismatch is retryable; only key/quota are fatal.
+          const deadBridge = /context invalidated|receiving end|could not establish|message channel closed/i.test(String(res.error || ''));
+          const fatal      = /40[13]|456|no-key/.test(String(res.error || ''));
+          if (fatal || attempt >= TUNE.retries) {
+            if (deadBridge && autoReloadIfBridgeDead(ep, target, provider, source, res.error, hud)) return;
+            hud.fade();
+            hideTranslateProgress();
+            log.warn(`Translate stopped at ${done}/${texts.length}: ${res.error}`);
+            const note = done > 0 ? ` (${done}/${texts.length} saved — click Translate to resume)` : '';
+            showErrorToast(mtErrorText(res.error) + note, () => translateToTarget({ target, provider, source }));
+            return;
+          }
+          attempt++;
+          const rateLimited = /429|rate|timeout/i.test(String(res.error || ''));
+          hud.update(done, texts.length, deadBridge ? `reconnecting…` : rateLimited ? `rate limited — waiting…` : `retry ${attempt}…`);
+          // Dead-bridge backoff is short (the worker usually wakes in ~1s);
+          // rate-limit waits out the window; other transients get a quick retry.
+          await sleep(deadBridge ? 700 * attempt : rateLimited ? TUNE.rateWait : 1500 * attempt);
+        }
+        for (let j = 0; j < idxs.length; j++) out[idxs[j]] = res.translations[j];
+        done += idxs.length;
+        STORAGE.lsSet(partKey, out, MT_PARTIAL_TTL);  // persist progress after each batch
+        setTranslateProgress(done, texts.length);
+        await sleep(PACE);  // pace between batches to respect provider rate limits
+      }
+    } finally {
+      _translating = false;
+      _translateCancel = false;
+    }
+
+    // Complete — build the track, drop the partial cache.
+    const mtCues = cues.map((c, k) => ({ ...c, text: out[k] || c.text, srcText: c.text }));
+    ep.addCustomSource({
+      id, kind: 'mt',
+      label: `${tLabel} (${pLabel})`,
+      lang:  target,
+      mtSource: source,
+      srcCues: mtCues,
+      sync:  { mode: 'none' },
+    });
+    STORAGE.lsDel(partKey);
+    try { sessionStorage.removeItem('crSubFix_mt_reloaded'); } catch (_) {}  // re-arm auto-reload for next time
+    sourceMenu.updateButtonVisibility();
+    hud.fade();
+    hideTranslateProgress();
+    log.info(`Machine-translated ${cues.length} cues ${source} → ${target} (resumed ${resumed}).`);
+    UI.showToast({ host: toastHost(), text: `Machine translation — not authored ${tLabel}`, duration: 5000 });
+    selectSource(id);
+  }
+
+  // Reload-and-resume safety net.  ONLY for a genuinely dead content↔SW bridge
+  // (extension reloaded under an open tab) — not for 429s/timeouts, where the
+  // worker is alive and reloading wouldn't help.  Bounded to one reload per tab
+  // session (sessionStorage survives the reload), so it can never loop.
+  function autoReloadIfBridgeDead(ep, target, provider, source, errMsg, hud) {
+    const dead = /context invalidated|receiving end|could not establish|message channel closed/i.test(String(errMsg || ''));
+    if (!dead) return false;
+    try {
+      if (sessionStorage.getItem('crSubFix_mt_reloaded')) return false;
+      sessionStorage.setItem('crSubFix_mt_reloaded', '1');
+    } catch (_) {}
+    STORAGE.lsSet('crSubFix_mt_resume_' + ep.guid, { target, provider, source }, 5 * 60 * 1000);
+    log.warn('Translate: extension↔worker bridge dead — reloading to recover (resume flagged).');
+    try { hud.html('<span style="color:#ffc107;">⟳</span>  Reconnecting — reloading the page…', 4000); } catch (_) {}
+    _translating = false; _translateCancel = false;
+    hideTranslateProgress();
+    setTimeout(() => { try { location.reload(); } catch (_) {} }, 900);
+    return true;
+  }
+
+  // After a recovery reload (or any reload mid-translation), pick the job back
+  // up automatically.  Fires only when a resume flag was left for this episode;
+  // one-shot (consumed immediately) so it cannot loop.
+  function maybeAutoResumeTranslate(attempt) {
+    const ep = currentEp();
+    if (!ep || _translating) return;
+    const key  = 'crSubFix_mt_resume_' + ep.guid;
+    const flag = STORAGE.lsGet(key);
+    if (!flag) return;
+    if (!isMtEnabled() || !isMtConfigured()) {
+      // MT settings (data-cr-mt-*) may not have propagated to the page yet right
+      // after a reload — retry a few times before giving up (flag left intact).
+      if ((attempt || 0) < 6) setTimeout(() => maybeAutoResumeTranslate((attempt || 0) + 1), 1000);
+      return;
+    }
+    STORAGE.lsDel(key);  // ready — consume now (one-shot)
+    if (flag.target && flag.provider && ep.getCustomSource(mtId(flag.target, flag.provider))) return;  // already finished
+    log.info('Auto-resuming translation after reload.');
+    setTimeout(() => { if (!_translating) translateToTarget({ target: flag.target, provider: flag.provider, source: flag.source }).catch(() => {}); }, 1200);
+  }
+
+  // ── In-player Translate panel ─────────────────────────────────────────────
+  // Lets the user pick target + (per-episode) source + provider before kicking
+  // off a translation.  The From list is built from THIS episode's valid CR
+  // tracks, so it adapts automatically; 'Auto' picks the best (English).
+  const TRANSLATE_PANEL_ID = 'cr-bsub-mt-panel';
+  let _mtPanelEsc = null;
+  function closeTranslatePanel() {
+    document.getElementById(TRANSLATE_PANEL_ID)?.remove();
+    if (_mtPanelEsc) { document.removeEventListener('keydown', _mtPanelEsc); _mtPanelEsc = null; }
+  }
+  function mtSelect() {
+    const s = document.createElement('select');
+    s.style.cssText = 'width:100%;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.25);' +
+      'border-radius:4px;padding:5px 8px;font-size:12px;font-family:sans-serif;cursor:pointer;outline:none;';
+    return s;
+  }
+  function mtSetOptions(sel, opts, selected) {
+    sel.innerHTML = '';
+    for (const [val, label] of opts) {
+      const o = document.createElement('option');
+      o.value = val; o.textContent = label;
+      if (val === selected) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+  // Valid CR official tracks for this episode usable as a translation source.
+  function validSourceOptions(ep, target) {
+    const opts = [['', 'Auto (best available)']];
+    for (const v of ep.catalog.versions()) {
+      const loc = v.locale;
+      if (loc === target || localeHasContent(loc) === false) continue;
+      const val = ep.catalog.validation(loc);
+      if (val === 'wrong-title' || val === 'no-subs') continue;
+      opts.push([loc, LOCALE_LABELS[loc] ?? loc]);
+    }
+    return opts;
+  }
+  function openTranslatePanel() {
+    const ep = currentEp();
+    if (!ep || !videoEl) return;
+    if (!isMtEnabled() || !isMtConfigured()) { showErrorToast('Set up and enable machine translation in the extension popup first.'); return; }
+    if (_translating) { showErrorToast('A translation is already running.'); return; }
+    closeTranslatePanel();
+
+    const panel = document.createElement('div');
+    panel.id = TRANSLATE_PANEL_ID;
+    Object.assign(panel.style, {
+      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
+      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '12px 14px',
+      width: '300px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
+    });
+    panel.innerHTML =
+      `<div style="font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:10px;">🌐 Translation settings</div>` +
+      `<div style="font-size:11px;color:#888;margin-bottom:3px;">Translate into</div>` +
+      `<div data-row="to" style="margin-bottom:9px;"></div>` +
+      `<div style="font-size:11px;color:#888;margin-bottom:3px;">From</div>` +
+      `<div data-row="from" style="margin-bottom:6px;"></div>` +
+      `<div data-row="prov" style="font-size:10px;color:#9ecbff;margin-bottom:6px;"></div>` +
+      `<div style="font-size:10px;color:#777;line-height:1.4;margin-bottom:10px;">Saved automatically. English is usually the best source; machine output is an approximation.</div>` +
+      `<div data-row="foot" style="display:flex;gap:8px;justify-content:flex-end;"></div>`;
+
+    const toSel = mtSelect(), fromSel = mtSelect();
+    let target = getMtTarget();
+    mtSetOptions(toSel,   MT_TARGET_OPTIONS,              target);
+    mtSetOptions(fromSel, validSourceOptions(ep, target), getMtSourcePref() || '');
+    panel.querySelector('[data-row="prov"]').textContent =
+      `Provider: ${MT_PROVIDER_LABELS[getMtProvider()] ?? getMtProvider()} — change in the extension popup`;
+    // Persist on change so choices stick across episodes (no re-picking); rebuild
+    // From when the target changes (can't translate a language into itself).
+    toSel.addEventListener('change', () => {
+      target = toSel.value;
+      setMtPref('target', target);
+      mtSetOptions(fromSel, validSourceOptions(ep, target), fromSel.value);
+      setMtPref('source', fromSel.value);
+    });
+    fromSel.addEventListener('change', () => setMtPref('source', fromSel.value));
+
+    panel.querySelector('[data-row="to"]').appendChild(toSel);
+    panel.querySelector('[data-row="from"]').appendChild(fromSel);
+
+    const cancelB = syncBtn('Done');
+    const goB     = syncBtn('Translate', true);
+    panel.querySelector('[data-row="foot"]').append(cancelB, goB);
+    cancelB.addEventListener('click', closeTranslatePanel);
+    goB.addEventListener('click', () => {
+      setMtPref('target', toSel.value);
+      setMtPref('source', fromSel.value);
+      closeTranslatePanel();
+      translateToTarget({ target: toSel.value, source: fromSel.value || null }).catch(() => {});
+    });
+
+    const mountTarget = document.fullscreenElement ?? videoEl.parentElement ?? document.body;
+    if (mountTarget !== document.body && window.getComputedStyle(mountTarget).position === 'static') mountTarget.style.position = 'relative';
+    mountTarget.appendChild(panel);
+    panel.style.left = '50%'; panel.style.bottom = '14%'; panel.style.transform = 'translateX(-50%)';
+
+    _mtPanelEsc = (e) => { if (e.key === 'Escape') closeTranslatePanel(); };
+    setTimeout(() => document.addEventListener('keydown', _mtPanelEsc), 0);
+  }
+
+  // ── In-player typeset tuning panel ────────────────────────────────────────
+  // Live sliders for the \pos-sign transform tuning (perspective / 3-D / skew /
+  // rotation / size) so the right defaults can be dialled in visually.  Each
+  // slider writes localStorage and forces an immediate repaint.  Opened via
+  // crSubFixDebug.tune().
+  const TUNE_PANEL_ID = 'cr-bsub-tune-panel';
+  let _tuneTeardown = null;
+  function closeTypesetTunePanel() {
+    document.getElementById(TUNE_PANEL_ID)?.remove();
+    if (_tuneTeardown) { _tuneTeardown(); _tuneTeardown = null; }
+  }
+  function tuneSlider(label, lsKey, min, max, step, def, suffix) {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:9px;';
+    let cur = def;
+    try { const v = parseFloat(localStorage.getItem(lsKey)); if (!isNaN(v)) cur = v; } catch (_) {}
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;color:#bbb;margin-bottom:2px;';
+    const lab = document.createElement('span'); lab.textContent = label;
+    const val = document.createElement('span'); val.textContent = cur + suffix; val.style.color = '#ff6b35';
+    head.append(lab, val);
+    const range = document.createElement('input');
+    range.type = 'range'; range.min = min; range.max = max; range.step = step; range.value = cur;
+    range.style.cssText = 'width:100%;cursor:pointer;accent-color:#ff6b35;';
+    range.addEventListener('input', () => {
+      const v = parseFloat(range.value);
+      val.textContent = v + suffix;
+      try { localStorage.setItem(lsKey, String(v)); } catch (_) {}
+      try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
+    });
+    row.append(head, range);
+    return row;
+  }
+  function openTypesetTunePanel() {
+    if (!videoEl) return;
+    closeTypesetTunePanel();
+    const panel = document.createElement('div');
+    panel.id = TUNE_PANEL_ID;
+    Object.assign(panel.style, {
+      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
+      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '10px 13px',
+      width: '270px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
+    });
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:9px;cursor:move;';
+    title.textContent = '🎚 Typeset tuning (signs) ⠿';
+    panel.appendChild(title);
+    panel.appendChild(tuneSlider('Perspective',  'crSubFix_persp',     300, 2200, 25,   1018, 'px'));
+    panel.appendChild(tuneSlider('3-D strength',  'crSubFix_ts_3d',    0,   2,    0.05, 1,   '×'));
+    panel.appendChild(tuneSlider('Skew',          'crSubFix_ts_skew',  0,   2,    0.05, 1,   '×'));
+    panel.appendChild(tuneSlider('Rotation',      'crSubFix_ts_rot',   0,   2,    0.05, 1,   '×'));
+    panel.appendChild(tuneSlider('Sign size',     'crSubFix_signscale', 0.5, 1.3, 0.02, 0.9, '×'));
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:10px;color:#777;line-height:1.4;margin:2px 0 8px;';
+    note.textContent = '× = multiplier on the file’s value (1 = exact). Tell me the values you like and I’ll bake them in.';
+    panel.appendChild(note);
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+    const resetB = syncBtn('Reset'); const doneB = syncBtn('Done', true);
+    foot.append(resetB, doneB);
+    panel.appendChild(foot);
+    resetB.addEventListener('click', () => {
+      ['crSubFix_persp', 'crSubFix_ts_3d', 'crSubFix_ts_skew', 'crSubFix_ts_rot', 'crSubFix_signscale']
+        .forEach((k) => { try { localStorage.removeItem(k); } catch (_) {} });
+      try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
+      openTypesetTunePanel();   // rebuild sliders at defaults
+    });
+    doneB.addEventListener('click', closeTypesetTunePanel);
+
+    const mount = document.fullscreenElement ?? videoEl.parentElement ?? document.body;
+    if (mount !== document.body && window.getComputedStyle(mount).position === 'static') mount.style.position = 'relative';
+    mount.appendChild(panel);
+    panel.style.left = '14px'; panel.style.top = '12%';
+
+    // Drag by the title bar so it can be moved off the signs being tuned.
+    let drag = null;
+    const onDown = (e) => {
+      const pr = (panel.offsetParent || document.body).getBoundingClientRect();
+      const r = panel.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, pr };
+      e.preventDefault();
+    };
+    const onMove = (e) => {
+      if (!drag) return;
+      panel.style.left = (e.clientX - drag.dx - drag.pr.left) + 'px';
+      panel.style.top  = (e.clientY - drag.dy - drag.pr.top) + 'px';
+    };
+    const onUp = () => { drag = null; };
+    const onEsc = (e) => { if (e.key === 'Escape') closeTypesetTunePanel(); };
+    title.addEventListener('mousedown', onDown);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    setTimeout(() => document.addEventListener('keydown', onEsc), 0);
+    _tuneTeardown = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onEsc);
+    };
   }
 
   // ── Anchor map remaster ────────────────────────────────────────────────────
@@ -644,25 +1727,68 @@
   const getSubScale            = () => SETTINGS.read(html, 'subScale');
   const getSyncOffset          = () => SETTINGS.read(html, 'subOffset');
   const getSubBottomFloor      = () => SETTINGS.read(html, 'subBottomFloor');
-  const isStyleOverride        = () => SETTINGS.read(html, 'styleOverride');
-  const getOverrideFont        = () => SETTINGS.read(html, 'overrideFontFamily');
-  const getOverrideColor       = () => SETTINGS.read(html, 'overrideTextColor');
-  const getOverrideTextOp      = () => SETTINGS.read(html, 'overrideTextOpacity') / 100;
-  const getOverrideOutline     = () => SETTINGS.read(html, 'overrideOutlineColor');
-  const getOverrideBord        = () => SETTINGS.read(html, 'overrideBord');
-  const getOverrideShad        = () => SETTINGS.read(html, 'overrideShad');
-  const getOverrideShadStyle   = () => SETTINGS.read(html, 'overrideShadStyle');
-  const getOverrideShadOp      = () => SETTINGS.read(html, 'overrideShadOpacity') / 100;
-  const isOverrideBgBox        = () => SETTINGS.read(html, 'overrideBgBox');
-  const getOverrideBgColor     = () => SETTINGS.read(html, 'overrideBgColor');
-  const getOverrideBgOp        = () => SETTINGS.read(html, 'overrideBgOpacity') / 100;
-  const getOverrideBgRadius    = () => SETTINGS.read(html, 'overrideBgRadius');
-  const getOverrideBgPaddingX  = () => SETTINGS.read(html, 'overrideBgPaddingX');
-  const getOverrideBgPaddingY  = () => SETTINGS.read(html, 'overrideBgPaddingY');
-  const isOverrideBgGlass      = () => SETTINGS.read(html, 'overrideBgGlass');
-  const getOverrideBgGlassBlur = () => SETTINGS.read(html, 'overrideBgGlassBlur');
-  const getOverrideBgGlassSat  = () => SETTINGS.read(html, 'overrideBgGlassSat');
-  const getOverrideBgGlassHue  = () => SETTINGS.read(html, 'overrideBgGlassHue');
+  // (The style-override values are read directly via SETTINGS.read in
+  // captureStyleCtx(), so no per-key getter accessors are kept here.)
+  // Target + source are chosen on the player (⚙ Translation settings) and
+  // persisted to localStorage, so they stick across episodes without re-picking;
+  // the popup schema value is only the first-run fallback.  (Provider + key stay
+  // in the popup — Chrome only lets an extension PAGE request the host
+  // permission, and a provider is paired with its key.)
+  const getMtTarget = () => {
+    try { const v = localStorage.getItem('crSubFix_mt_target'); if (v) return v; } catch (_) {}
+    return SETTINGS.read(html, 'mtTarget') || 'ja-JP';
+  };
+  const getMtSourcePref = () => {
+    try { const v = localStorage.getItem('crSubFix_mt_source'); if (v != null) return v; } catch (_) {}
+    return SETTINGS.read(html, 'mtSource') || '';
+  };
+  const setMtPref = (key, val) => { try { localStorage.setItem('crSubFix_mt_' + key, val); } catch (_) {} };
+  const isMtEnabled            = () => SETTINGS.read(html, 'mtEnabled');
+  const isMtConfigured         = () => html.getAttribute(PROTOCOL.ATTR.MT_CONFIGURED) === 'true';
+  // Display names for MT TARGET languages.  Deliberately NOT LOCALE_LABELS —
+  // that maps 'ja-JP' to "English (Japanese source)" (the CR dub-context label),
+  // which is nonsense for a translation target.  These are real language names.
+  const MT_LANG_LABELS = {
+    'ja-JP': 'Japanese',  'ko-KR': 'Korean',          'zh-CN': 'Chinese (Simplified)',
+    'zh-TW': 'Chinese (Traditional)', 'en-US': 'English', 'de-DE': 'Deutsch',
+    'es-419': 'Español (Lat)', 'es-ES': 'Español (España)', 'fr-FR': 'Français',
+    'pt-BR': 'Português (BR)', 'it-IT': 'Italiano',    'ru-RU': 'Русский',
+  };
+  const mtLangLabel = (loc) => MT_LANG_LABELS[loc] ?? LOCALE_LABELS[loc] ?? loc;
+  // Ordered target options for the in-player Translate panel.
+  const MT_TARGET_OPTIONS = [
+    ['ja-JP', 'Japanese'], ['ko-KR', 'Korean'], ['zh-CN', 'Chinese (Simplified)'],
+    ['zh-TW', 'Chinese (Traditional)'], ['en-US', 'English'], ['de-DE', 'Deutsch'],
+    ['es-419', 'Español (Lat)'], ['fr-FR', 'Français'], ['pt-BR', 'Português (BR)'],
+    ['it-IT', 'Italiano'], ['ru-RU', 'Русский'],
+  ];
+  const getMtProvider = () => SETTINGS.read(html, 'mtProvider') || 'deepl';
+  const MT_PROVIDER_LABELS = { deepl: 'DeepL', google: 'Google', gemini: 'Gemini' };
+  // MT tracks are keyed by target AND provider so e.g. a DeepL and a Google
+  // Japanese track coexist as separate, switchable rows for A/B comparison.
+  const mtId = (target, provider) => `custom:mt:${target}:${provider}`;
+
+  // Runtime-tunable throughput knobs so the sweet spot for each API can be found
+  // empirically without a rebuild.  Override from the page console:
+  //   crSubFixDebug.mtTune({ batch: 15, pace: 6000 })   // then re-translate
+  //   crSubFixDebug.mtTuneReset()
+  // Note the trade-off: a SMALLER batch means MORE requests (worse for per-minute
+  // and per-day caps); a LARGER `pace` is slower but safer.  Defaults are
+  // deliberately conservative.
+  function mtTuning(provider) {
+    const g = provider === 'gemini';
+    const num = (k, d) => {
+      try { const v = parseInt(localStorage.getItem(k), 10); return (isFinite(v) && v >= 0) ? v : d; }
+      catch (_) { return d; }
+    };
+    return {
+      batch:    Math.max(1, num('crSubFix_mt_batch',    g ? 30 : 50)),  // fewest requests = least throttling
+      pace:     num('crSubFix_mt_pace',     g ? 5000 : 1200),  // ms between batches
+      timeout:  num('crSubFix_mt_timeout',  g ? 40000 : 60000),
+      rateWait: num('crSubFix_mt_ratewait', 20000),            // ms to wait after a 429
+      retries:  Math.max(1, num('crSubFix_mt_retries',  4)),
+    };
+  }
 
   // hexToRgba lives in lib/cue-style.js — aliased near the top of this file.
 
@@ -744,9 +1870,13 @@
     if (queueResolverTimer) { clearTimeout(queueResolverTimer); queueResolverTimer = null; }
     clearTimeout(settleTimer); settleTimer = null;
     sourceMenu.close();
+    closeSyncPanel();
+    closeTranslatePanel();
+    closeTypesetTunePanel();
     sourceMenu.removeButton();
     renderer.unmount();
     document.getElementById(BTN_ID)?.remove();
+    document.getElementById(PROGRESS_ID)?.remove();
     if (_errorToast) { try { _errorToast.remove(); } catch (_) {} _errorToast = null; }
     hudCtl    = null;
     setJpStatus(PROTOCOL.STATUS.NONE);
@@ -1225,13 +2355,54 @@
   // context capture — both need access to settings + Episode, which the
   // renderer is deliberately ignorant of.
 
+  // ── libass sign layer ──────────────────────────────────────────────────────
+  // When enabled, \pos typeset signs are rendered by REAL libass (SubtitlesOctopus
+  // in content.js) instead of our CSS overlay — so the 3-D typeset matches CR's
+  // own server-side libass exactly.  We post a "signs-only" .ass (the active CR
+  // source's raw file, filtered to \pos/\move Dialogue lines) across to content.js;
+  // dialogue stays on the CSS renderer.  `_signRawAss` = the active source's raw
+  // .ass (null for custom/MT sources, which have no typeset).
+  let _signRawAss = null;
+  const isLibassSigns = () => { try { return localStorage.getItem('crSubFix_libass') !== '0'; } catch (_) { return true; } };
+  function buildSignsAss(raw) {
+    if (!raw || !/\[Events\]/i.test(raw)) return null;
+    const lines = raw.replace(/\r/g, '').split('\n');
+    const out = []; let inEvents = false, hasSign = false;
+    for (const l of lines) {
+      if (/^\[Events\]/i.test(l)) { inEvents = true; out.push(l); continue; }
+      if (!inEvents) { out.push(l); continue; }            // [Script Info]/[V4+ Styles]/[Fonts]
+      if (/^Format\s*:/i.test(l)) { out.push(l); continue; }
+      if (/^Dialogue\s*:/i.test(l)) { if (/\\pos|\\move/i.test(l)) { out.push(l); hasSign = true; } continue; }
+      out.push(l);                                          // comments etc.
+    }
+    return hasSign ? out.join('\n') : null;
+  }
+  function pushSignLayer() {
+    let ass = null;
+    try { if (isLibassSigns() && overlayActive && _signRawAss) ass = buildSignsAss(_signRawAss); } catch (_) {}
+    try { log.info(`Sign layer → ${ass ? ass.length + ' chars' : 'cleared'} (libass=${isLibassSigns()} active=${overlayActive} raw=${_signRawAss ? _signRawAss.length : 0})`); } catch (_) {}
+    // Re-assert the toggle token on <html> first: CR's framework can strip our
+    // custom data-* attribute during hydration, after which content.js reads a
+    // null token and rejects every sign push.  Setting it right before the post
+    // guarantees the isolated world sees a live, matching token.
+    try { document.documentElement.setAttribute(PROTOCOL.ATTR.TOGGLE_TOKEN, TOGGLE_TOKEN); } catch (_) {}
+    try { window.postMessage({ type: PROTOCOL.POST.SIGN_ASS, token: TOGGLE_TOKEN, ass }, window.location.origin); } catch (_) {}
+  }
+  function setSignSource(raw) { _signRawAss = raw || null; pushSignLayer(); }
+  // Wrap overlayActive writes so the libass sign layer follows on/off (it shows
+  // signs only while the overlay is active, and clears the moment it turns off).
+  function setOverlayActive(v) { overlayActive = v; pushSignLayer(); }
+
   function onTimeUpdate() {
     if (!overlayActive || !videoEl) return;
     const ep = currentEp();
     if (!ep) return;
     const offset = getSyncOffset();
-    const active = ep.cuesAt(videoEl.currentTime, offset);
-    renderer.render(active, videoEl.currentTime + offset, captureStyleCtx());
+    let active = ep.cuesAt(videoEl.currentTime, offset);
+    // libass owns the \pos typeset signs — keep them out of the CSS overlay so
+    // they don't double-render.
+    if (isLibassSigns()) active = active.filter((c) => !c.pos);
+    renderer.render(active, videoEl.currentTime + offset, captureStyleCtxs());
   }
 
   // Race fix: the first paint after toggling JP CC on can land BEFORE
@@ -1273,6 +2444,9 @@
 
   function onFullscreenChange() {
     sourceMenu.close();
+    closeSyncPanel();
+    closeTranslatePanel();
+    closeTypesetTunePanel();
     const fsEl = document.fullscreenElement;
     renderer.reparentForFullscreen(fsEl);
 
@@ -1399,28 +2573,38 @@
   // Batches all data-attribute reads into one object per render call.  The
   // renderer treats this as opaque input — it doesn't know about SETTINGS,
   // hexToRgba, or sanitizeFontFamily.
-  function captureStyleCtx() {
-    if (!isStyleOverride()) return { override: false };
+  // Build a style context for one profile.  prefix '' = dialogue (the keys
+  // above), prefix 'sign_' = the typeset-sign profile (sign_* keys).  Returns
+  // {override:false} when that profile's override is off — for signs that means
+  // "match original" (native ASS style); for dialogue it's the default outlined
+  // rendering.
+  function captureStyleCtx(prefix) {
+    prefix = prefix || '';
+    const read = (base) => SETTINGS.read(html, prefix + base);
+    if (!read('styleOverride')) return { override: false };
     return {
       override: true,
-      color:    hexToRgba(getOverrideColor(), getOverrideTextOp()),
-      font:     sanitizeFontFamily(getOverrideFont()),
-      bgBox:     isOverrideBgBox(),
-      bgCss:     hexToRgba(getOverrideBgColor(), getOverrideBgOp()),
-      bgRadius:  getOverrideBgRadius(),
-      bgPadX:    getOverrideBgPaddingX(),
-      bgPadY:    getOverrideBgPaddingY(),
-      bgGlass:   isOverrideBgGlass(),
-      bgBlur:    getOverrideBgGlassBlur(),
-      bgSat:     getOverrideBgGlassSat(),
-      bgHue:     getOverrideBgGlassHue(),
-      outline:  getOverrideOutline(),
-      bord:     getOverrideBord(),
-      shad:     getOverrideShad(),
-      soft:     getOverrideShadStyle() === 'soft',
-      shadOp:   getOverrideShadOp(),
+      color:    hexToRgba(read('overrideTextColor'), read('overrideTextOpacity') / 100),
+      font:     sanitizeFontFamily(read('overrideFontFamily')),
+      bgBox:     read('overrideBgBox'),
+      bgCss:     hexToRgba(read('overrideBgColor'), read('overrideBgOpacity') / 100),
+      bgRadius:  read('overrideBgRadius'),
+      bgPadX:    read('overrideBgPaddingX'),
+      bgPadY:    read('overrideBgPaddingY'),
+      bgGlass:   read('overrideBgGlass'),
+      bgBlur:    read('overrideBgGlassBlur'),
+      bgSat:     read('overrideBgGlassSat'),
+      bgHue:     read('overrideBgGlassHue'),
+      outline:  read('overrideOutlineColor'),
+      bord:     read('overrideBord'),
+      shad:     read('overrideShad'),
+      soft:     read('overrideShadStyle') === 'soft',
+      shadOp:   read('overrideShadOpacity') / 100,
     };
   }
+  // Both profiles, threaded to the renderer each frame: dialogue cues use
+  // .dialogue, \pos typeset signs use .signs.
+  const captureStyleCtxs = () => ({ dialogue: captureStyleCtx(''), signs: captureStyleCtx('sign_') });
 
   // ── Native subtitle suppression ────────────────────────────────────────────
   // The four-layer strategy that hides Crunchyroll's own subtitle renderer while
@@ -1446,6 +2630,9 @@
 
   function getSourceShortLabel() {
     const loc = currentEp()?.activeSource() ?? 'ja-JP';
+    if (isCustomId(loc)) {
+      return currentCustomSource()?.kind === 'mt' ? 'MT' : 'FILE';
+    }
     return LOCALE_SHORT[loc] ?? loc.slice(0, 2).toUpperCase();
   }
 
@@ -1548,6 +2735,7 @@
 
     let cues = parseSubtitles(rawText, url);
     ep.setOriginalCues(cues);
+    setSignSource(rawText);  // hand the \pos typeset signs to libass (no-op for VTT / sign-less)
     const fmt = rawText.trimStart().startsWith('[Script Info]') ? 'ASS' : 'VTT';
     log.info(`Parsed ${cues.length} cues (${fmt}).`);
 
@@ -1598,7 +2786,7 @@
     if (!ep) return;
 
     if (overlayActive) {
-      overlayActive = false;
+      setOverlayActive(false);
       ep.setActiveSubUrl(null);
       stopSync();
       syncSubSuppression();   // keep CR subs hidden if "hide official" is on
@@ -1608,7 +2796,7 @@
     }
 
     if (ep.hasCues()) {
-      overlayActive = true;
+      setOverlayActive(true);
       syncSubSuppression();
       setButtonState(btn, 'active');
       setJpStatus(PROTOCOL.STATUS.ACTIVE);
@@ -1628,6 +2816,39 @@
     let srcFetchFailed      = false;
     const catalog   = ep.catalog;
     const srcLocale = ep.activeSource();
+
+    // Custom source (uploaded file / machine translation): cues are already in
+    // hand on the Episode — no URL fetch, no wrong-title probe.  Apply them
+    // directly through the same activation tail the URL path uses below.
+    if (isCustomId(srcLocale)) {
+      const record = ep.getCustomSource(srcLocale);
+      if (!record) {
+        // Stale selection (e.g. the record was removed) — reset to default.
+        ep.setActiveSource(null);
+        ep.clearCues();
+        renderer.invalidate();
+        clickInProgress = false;
+        handleButtonClick(btn).catch(() => {});
+        return;
+      }
+      ep.setOriginalCues(applyCustomSync(record));
+      setSignSource(null);   // custom/MT sources have no CR typeset — clear libass
+      ep.setActiveSubUrl(null);
+      setOverlayActive(true);
+      syncSubSuppression();
+      setButtonState(btn, 'active');
+      setJpStatus(PROTOCOL.STATUS.ACTIVE);
+      startSync();
+      paintWithSettingsCatchup();
+      updateActiveInfo();
+      clickInProgress = false;
+      // Uploaded files may need timing alignment; a machine-translated track
+      // already carries its source CR track's (correct) timing, so skip it.
+      if (record.kind === 'local') {
+        maybeAutoSyncCustom(record).catch(err => log.warn('Auto-sync error:', err));
+      }
+      return;
+    }
 
     if (srcLocale && srcLocale !== 'ja-JP') {
       subUrl = getSubtitleUrl(srcLocale);
@@ -1808,7 +3029,7 @@
       }
 
       ep.setActiveSubUrl(result.finalUrl);
-      overlayActive = true;
+      setOverlayActive(true);
       syncSubSuppression();
       setButtonState(btn, 'active');
       setJpStatus(PROTOCOL.STATUS.ACTIVE);
@@ -1932,6 +3153,50 @@
   function setPendingActivate(on) {
     pendingActivate = on;
     setQueuedPulse(on);
+  }
+
+  // ── Inline progress bar (translation) ─────────────────────────────────────
+  // A thin bar inserted into the controls row immediately LEFT of the B-SUB
+  // button, shown while a long op (machine translation) runs so progress is
+  // visible on the player chrome, not just the centre HUD.  Only injected when
+  // the button is in the controls row (the fixed-fallback button has no row).
+  function injectProgressBar() {
+    if (!buttonInControls) return;
+    if (document.getElementById(PROGRESS_ID)) return;
+    const btn = document.getElementById(BTN_ID);
+    if (!btn || !btn.parentElement) return;
+    const bar = document.createElement('div');
+    bar.id = PROGRESS_ID;
+    Object.assign(bar.style, {
+      display: 'none', width: '54px', height: '4px',
+      background: 'rgba(255,255,255,0.2)', borderRadius: '2px',
+      overflow: 'hidden', alignSelf: 'center', flexShrink: '0', marginRight: '8px',
+    });
+    const fill = document.createElement('div');
+    fill.dataset.fill = '1';
+    Object.assign(fill.style, { width: '0%', height: '100%', background: '#ff6b35', transition: 'width 0.3s ease' });
+    bar.appendChild(fill);
+    btn.parentElement.insertBefore(bar, btn);
+  }
+
+  function setTranslateProgress(step, total) {
+    let bar = document.getElementById(PROGRESS_ID);
+    if (!bar) { injectProgressBar(); bar = document.getElementById(PROGRESS_ID); }
+    if (!bar) return;
+    bar.style.display = '';
+    const pct  = total > 0 ? Math.max(0, Math.min(100, Math.round((step / total) * 100))) : 0;
+    const fill = bar.querySelector('[data-fill]');
+    if (fill) fill.style.width = pct + '%';
+    bar.title = `Translating… ${step}/${total}`;
+  }
+
+  function hideTranslateProgress() {
+    const bar = document.getElementById(PROGRESS_ID);
+    if (bar) {
+      bar.style.display = 'none';
+      const fill = bar.querySelector('[data-fill]');
+      if (fill) fill.style.width = '0%';
+    }
   }
 
   function injectButton() {
@@ -2137,16 +3402,20 @@
     let activeInfo = {};
     try { const raw = el.getAttribute(PROTOCOL.ATTR.ACTIVE_INFO); if (raw) activeInfo = JSON.parse(raw); } catch (_) {}
     lines.push(
-      `browser : ${navigator.userAgent}`,
-      `page    : ${location.href}`,
+      `browser : ${coarsePlatform()}`,
+      `episode : ${getEpisodeGuid() || '-'}`,
       `state   : jpStatus=${el.getAttribute(PROTOCOL.ATTR.JP_STATUS) || '-'} source=${activeInfo.source ?? '-'} audio=${activeInfo.audio ?? '-'}`,
-      `settings: enabled=${SETTINGS.read(el, 'enabled')} auto=${SETTINGS.read(el, 'autoActivate')} hideOfficial=${SETTINGS.read(el, 'hideOfficialSubs')}`,
+      `settings: enabled=${SETTINGS.read(el, 'enabled')} auto=${SETTINGS.read(el, 'autoActivate')} hideOfficial=${SETTINGS.read(el, 'hideOfficialSubs')} styleOverride=${SETTINGS.read(el, 'styleOverride')}`,
+      `mt      : configured=${el.getAttribute(PROTOCOL.ATTR.MT_CONFIGURED) || '-'} provider=${getMtProvider()} target=${getMtTarget()} source=${getMtSourcePref() || 'auto'}`,
       '--- recent activity (most recent last) ---',
     );
     // Keep the MOST RECENT trace that fits the budget (the Worker's embed holds
     // ~4000) — trimming from the front preserves the lines just before the error.
     const header = lines.join('\n');
-    const redact = (s) => s.replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>');
+    const redact = (s) => s
+      .replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>')   // strip signed-URL query
+      .replace(/[^\s@|]+@[^\s@|]+\.[^\s@|]+/g, '<email>')             // emails
+      .replace(/\b[0-9a-f]{32,}\b/gi, '<id>');                        // long hex (tokens/ids)
     let trace = [];
     try { trace = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]'); } catch (_) {}
     let tail = trace.map(redact).join('\n');
@@ -2404,7 +3673,7 @@
           log.info(`Audio changed → reloading [${active}] subs for new session.`);
           const reloadBtn = document.getElementById(BTN_ID);
           if (reloadBtn) {
-            overlayActive = false;
+            setOverlayActive(false);
             ep.setActiveSubUrl(null);
             ep.clearCues();
             renderer.invalidate();
@@ -2433,6 +3702,7 @@
       ep.catalog.setVersions(newVersions);
       sourceMenu.updateButtonVisibility();
       log.info(`Source picker: ${newVersions.map(v => v.locale).join(', ')}`);
+      maybeAutoResumeTranslate();  // continue a translation interrupted by a reload
 
       // Auto-recover the button from a premature-click 'unavail' state.
       // The user clicked JP CC during the gap between dub-switch SPA

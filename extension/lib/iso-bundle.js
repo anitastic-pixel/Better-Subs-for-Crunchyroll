@@ -45,6 +45,44 @@
     { key: 'overrideBgGlassBlur',  attr: 'data-cr-bg-glass-blur',  default: 8,          type: 'int'    },
     { key: 'overrideBgGlassSat',   attr: 'data-cr-bg-glass-sat',   default: 160,        type: 'int'    },
     { key: 'overrideBgGlassHue',   attr: 'data-cr-bg-glass-hue',   default: 0,          type: 'int'    },
+    // Per-type style profile for TYPESET SIGNS (\pos cues).  Mirrors the dialogue
+    // keys above with a `sign_` prefix; default sign_styleOverride=false means
+    // "match original" (native ASS style), so signs blend into the artwork until
+    // the user opts into a custom sign look via the popup's "Style for: Signs".
+    { key: 'sign_styleOverride',        attr: 'data-cr-sign-style-override', default: false,     type: 'bool'   },
+    { key: 'sign_overrideFontFamily',   attr: 'data-cr-sign-font-family',    default: '',        type: 'string' },
+    { key: 'sign_overrideTextColor',    attr: 'data-cr-sign-color',          default: '#ffffff', type: 'string' },
+    { key: 'sign_overrideTextOpacity',  attr: 'data-cr-sign-text-opacity',   default: 100,       type: 'int'    },
+    { key: 'sign_overrideOutlineColor', attr: 'data-cr-sign-outline-color',  default: '#000000', type: 'string' },
+    { key: 'sign_overrideBord',         attr: 'data-cr-sign-bord-size',      default: 2,         type: 'float'  },
+    { key: 'sign_overrideShad',         attr: 'data-cr-sign-shad-size',      default: 1,         type: 'float'  },
+    { key: 'sign_overrideShadStyle',    attr: 'data-cr-sign-shad-style',     default: 'hard',    type: 'string' },
+    { key: 'sign_overrideShadOpacity',  attr: 'data-cr-sign-shad-opacity',   default: 80,        type: 'int'    },
+    { key: 'sign_overrideBgBox',        attr: 'data-cr-sign-bg-box',         default: false,     type: 'bool'   },
+    { key: 'sign_overrideBgColor',      attr: 'data-cr-sign-bg-color',       default: '#000000', type: 'string' },
+    { key: 'sign_overrideBgOpacity',    attr: 'data-cr-sign-bg-opacity',     default: 70,        type: 'int'    },
+    { key: 'sign_overrideBgRadius',     attr: 'data-cr-sign-bg-radius',      default: 4,         type: 'int'    },
+    { key: 'sign_overrideBgPaddingX',   attr: 'data-cr-sign-bg-padding-x',   default: 10,        type: 'int'    },
+    { key: 'sign_overrideBgPaddingY',   attr: 'data-cr-sign-bg-padding-y',   default: 2,         type: 'int'    },
+    { key: 'sign_overrideBgGlass',      attr: 'data-cr-sign-bg-glass',       default: false,     type: 'bool'   },
+    { key: 'sign_overrideBgGlassBlur',  attr: 'data-cr-sign-bg-glass-blur',  default: 8,         type: 'int'    },
+    { key: 'sign_overrideBgGlassSat',   attr: 'data-cr-sign-bg-glass-sat',   default: 160,       type: 'int'    },
+    { key: 'sign_overrideBgGlassHue',   attr: 'data-cr-sign-bg-glass-hue',   default: 0,         type: 'int'    },
+    // Force the sign TEXT colour to win even on signs that animate their own
+    // colour via ASS \t (libass renders the override colour only if the inline
+    // \t/\c colour tags are stripped — which also drops that colour animation).
+    { key: 'sign_forceColor',           attr: 'data-cr-sign-force-color',    default: false,     type: 'bool'   },
+    // Scales the typeset sign font (multiplies the .ass Style Fontsize).  Applies
+    // independently of sign_styleOverride so signs can be resized without recolour.
+    { key: 'sign_textScale',            attr: 'data-cr-sign-text-scale',     default: 1,         type: 'float'  },
+    // Machine translation (BYOK).  The API KEY is intentionally NOT in this
+    // schema — it lives in chrome.storage.local read only by the service worker
+    // and must never be mirrored to the page DOM.  Only these non-secret
+    // selectors cross into the page.  mtSource '' = auto-pick the best track.
+    { key: 'mtEnabled',            attr: 'data-cr-mt-enabled',     default: true,       type: 'bool'   },
+    { key: 'mtProvider',           attr: 'data-cr-mt-provider',    default: 'deepl',    type: 'string' },
+    { key: 'mtTarget',             attr: 'data-cr-mt-target',      default: 'ja-JP',    type: 'string' },
+    { key: 'mtSource',             attr: 'data-cr-mt-source',      default: '',         type: 'string' },
   ];
 
   function defaults() {
@@ -121,6 +159,10 @@
     // Source locale, audio dub locale, remaster state).  Updated on
     // source/audio change and on remaster completion.
     ACTIVE_INFO:  'data-cr-active-info',
+    // 'true' when a machine-translation API key is stored.  Set by content.js
+    // from chrome.storage — the KEY itself is never mirrored to the DOM (a page
+    // script could read it); only this derived boolean crosses into MAIN world.
+    MT_CONFIGURED: 'data-cr-mt-configured',
   };
 
   // Values written into ATTR.JP_STATUS by interceptor.js.  The popup reads this
@@ -140,12 +182,20 @@
     GET_STATUS:   'GET_STATUS',       // popup       → content (status query)
     GET_DIAG:     'GET_DIAGNOSTICS',  // popup       → content (issue-report bundle)
     SET_BADGE:    'setBadge',         // content     → background (badge update)
+    MT_TRANSLATE: 'MT_TRANSLATE',     // content     → background (translate a batch)
   };
 
-  // window.postMessage `type` value sent from content.js (isolated world) to
-  // interceptor.js (MAIN world) when the keyboard shortcut fires.
+  // window.postMessage `type` values sent between content.js (isolated world)
+  // and interceptor.js (MAIN world).  CR_SUB_TOGGLE is the keyboard-shortcut
+  // relay; RPC_REQ/RPC_RES are a token-guarded request/response bridge that lets
+  // the MAIN world reach the service worker (which it can't address directly) —
+  // used for machine translation.  Each RPC carries a numeric `id` so concurrent
+  // calls correlate their responses.
   const POST = {
     CR_SUB_TOGGLE: 'CR_SUB_TOGGLE',  // content → MAIN: toggle overlay (token-guarded)
+    RPC_REQ:       'CR_SUB_RPC_REQ', // MAIN    → content: {id, method, payload, token}
+    RPC_RES:       'CR_SUB_RPC_RES', // content → MAIN: {id, ok, result?, error?}
+    SIGN_ASS:      'CR_SUB_SIGN_ASS',// MAIN    → content: {ass, token} — feed libass (signs) or null to clear
   };
 
   const protocol = { ATTR, STATUS, MSG, POST };

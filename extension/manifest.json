@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Better Subs for Crunchyroll",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Mix and match subtitle and audio languages on Crunchyroll, with a custom subtitle overlay and adjustable size, sync, and style.",
   "minimum_chrome_version": "88",
   "permissions": ["storage"],
+  "optional_host_permissions": [
+    "https://api-free.deepl.com/*",
+    "https://api.deepl.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
   },
@@ -58,9 +63,22 @@
       "matches": ["*://www.crunchyroll.com/*"],
       "js": [
         "lib/iso-bundle.js",
+        "lib/octopus/subtitles-octopus.js",
         "content.js"
       ],
       "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/octopus/subtitles-octopus-worker.js",
+        "lib/octopus/subtitles-octopus-worker.wasm",
+        "lib/octopus/Tinos-Regular.ttf",
+        "lib/octopus/Arimo.ttf",
+        "lib/octopus/Cousine-Regular.ttf"
+      ],
+      "matches": ["*://www.crunchyroll.com/*"]
     }
   ]
 }

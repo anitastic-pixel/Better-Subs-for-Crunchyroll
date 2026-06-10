@@ -55,10 +55,12 @@
   const SRC_CACHE_PREFIX        = 'crSubFix_src_';
   const VALIDATION_CACHE_PFX    = 'crSubFix_valid_';
   const ANCHOR_PREFIX           = 'crSubFix_anchors_';
+  const CUSTOM_PREFIX           = 'crSubFix_custom_';
   const CACHE_TTL               = 6  * 24 * 60 * 60 * 1000;
   const MAP_TTL                 = 30 * 24 * 60 * 60 * 1000;
   const VALIDATION_CACHE_TTL_MS = 7  * 24 * 60 * 60 * 1000;
   const ANCHOR_TTL              = 30 * 24 * 60 * 60 * 1000;
+  const CUSTOM_TTL              = 30 * 24 * 60 * 60 * 1000;
 
   // Bounded backwards scan in cuesAt.  100 covers any realistic cue duration
   // even in dense typeset files.
@@ -98,6 +100,17 @@
     const NEVER = Symbol('never');
     let autoActivatedFor = NEVER;
     let enSessionCleanup = null;
+
+    // ── Custom sources (uploaded files / machine translation) ────────────────
+    // Non-CR subtitle tracks attached to this Episode.  Each record is fully
+    // serializable so it round-trips through localStorage keyed off the guid:
+    //   { id, kind:'local'|'mt', label, lang, srcCues, sync }
+    // where `srcCues` is the raw parsed Cue[] (pre-sync) and `sync` is the
+    // timing-map params the interceptor applies at display time
+    // ({mode:'none'} | {mode:'linear', scale, offset} | {mode:'anchors', anchors}).
+    // Episode only stores/serves these — the parser, sync algorithm, and apply
+    // path live in interceptor.js, mirroring how it treats remaster/validation.
+    let customSources = null;  // Map<id, record>, lazy-loaded from storage
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     function dispose() {
@@ -202,6 +215,41 @@
       return ANCHOR_PREFIX + guid + '_' + srcSession + '_' + audioLocale;
     }
 
+    // ── Custom-source registry ────────────────────────────────────────────────
+    function ensureCustomLoaded() {
+      if (customSources) return customSources;
+      customSources = new Map();
+      const saved = STORAGE.lsGet(CUSTOM_PREFIX + guid);
+      if (Array.isArray(saved)) {
+        for (const r of saved) {
+          if (r && r.id && Array.isArray(r.srcCues)) customSources.set(r.id, r);
+        }
+      }
+      return customSources;
+    }
+    function persistCustom() {
+      const arr = [...ensureCustomLoaded().values()];
+      if (arr.length) STORAGE.lsSet(CUSTOM_PREFIX + guid, arr, CUSTOM_TTL);
+      else STORAGE.lsDel(CUSTOM_PREFIX + guid);
+    }
+    function addCustomSource(record) {
+      ensureCustomLoaded().set(record.id, record);
+      persistCustom();
+      return record;
+    }
+    function getCustomSource(id)  { return ensureCustomLoaded().get(id) ?? null; }
+    function listCustomSources()  { return [...ensureCustomLoaded().values()]; }
+    function setCustomSourceSync(id, sync) {
+      const r = ensureCustomLoaded().get(id);
+      if (!r) return;
+      r.sync = sync;
+      persistCustom();
+    }
+    function removeCustomSource(id) {
+      ensureCustomLoaded().delete(id);
+      persistCustom();
+    }
+
     return {
       // ── Identity / lifecycle ──────────────────────────────────────────────
       get guid()     { return guid; },
@@ -279,6 +327,13 @@
       setCachedSrcUrl: alive(setCachedSrcUrl),
       evictCachedSrcUrl: alive(evictCachedSrcUrl),
       anchorMapKey,
+
+      // ── Custom sources (uploads / machine translation) ────────────────────
+      addCustomSource:     alive(addCustomSource),
+      getCustomSource,
+      listCustomSources,
+      setCustomSourceSync: alive(setCustomSourceSync),
+      removeCustomSource:  alive(removeCustomSource),
     };
   }
 
