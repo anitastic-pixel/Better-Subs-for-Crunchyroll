@@ -836,7 +836,7 @@
     // fetch lines up — giving a bilingual export with NO DeepL call (no rate limit).
     if (record.kind === 'mt' && !bilingual) {
       const srcLoc  = record.mtSource || pickMtSourceLocale(ep, record.lang);
-      const srcCues = srcLoc ? await fetchCuesForLocale(ep, srcLoc) : null;
+      const srcCues = srcLoc ? ((await fetchCuesForLocale(ep, srcLoc))?.cues ?? null) : null;
       if (ep.disposed) return;
       if (srcCues && srcCues.length === cues.length) {
         cues = cues.map((c, k) => ({ ...c, srcText: srcCues[k].text }));
@@ -1082,7 +1082,9 @@
     }
     if (!url) return null;
     const cues = await fetchAndParseSubs(url);
-    return cues.length ? cues : null;
+    // Surface the raw .ass too (already cached by fetchAndParseSubs) so callers
+    // can reuse its typeset signs — used by MT sign translation.
+    return cues.length ? { cues, rawText: ep.getCachedRawText(url) || null, url } : null;
   }
 
   // Partial-progress cache: every batch's translations are persisted keyed by
@@ -1133,8 +1135,10 @@
     hud.html(`<span style="color:#ff6b35;font-weight:700;">⟳ Translating ${escapeHtml(sLabel)} → ${escapeHtml(tLabel)}</span>` +
              `<div style="color:rgba(255,255,255,0.5);font-size:10px;margin-top:3px;">loading source subtitles…</div>`);
 
-    const cues = await fetchCuesForLocale(ep, source);
+    const fetched = await fetchCuesForLocale(ep, source);
     if (ep.disposed) { hud.fade(); return; }
+    const cues       = fetched && fetched.cues;
+    const baseRawAss = fetched && fetched.rawText;   // base track's .ass (for its signs)
     if (!cues || !cues.length) {
       hud.fade();
       showErrorToast('Could not load the source subtitles to translate.');
@@ -1222,6 +1226,10 @@
       lang:  target,
       mtSource: source,
       srcCues: mtCues,
+      // Carry the base CR track's typeset signs so the MT Source keeps showing
+      // them instead of dropping the sign layer.  buildSignsAss → just the \pos
+      // lines (+ headers), or null if the base has none / is VTT.
+      signRawAss: buildSignsAss(baseRawAss),
       sync:  { mode: 'none' },
     });
     STORAGE.lsDel(partKey);
@@ -2832,7 +2840,9 @@
         return;
       }
       ep.setOriginalCues(applyCustomSync(record));
-      setSignSource(null);   // custom/MT sources have no CR typeset — clear libass
+      // An MT Source carries the base CR track's signs (captured at translate
+      // time) so the typeset stays visible; uploads have none.  null clears libass.
+      setSignSource(record.kind === 'mt' ? (record.signRawAss || null) : null);
       ep.setActiveSubUrl(null);
       setOverlayActive(true);
       syncSubSuppression();
