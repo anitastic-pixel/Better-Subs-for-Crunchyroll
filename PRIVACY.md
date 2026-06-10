@@ -1,6 +1,6 @@
 # Privacy Policy — Better Subs for Crunchyroll
 
-_Last updated: 2026-06-07_
+_Last updated: 2026-06-09_
 
 **Better Subs for Crunchyroll does not collect, transmit, or sell your data
 automatically.** There are no analytics, no tracking, and no accounts. The one
@@ -66,24 +66,22 @@ The only other network destinations are:
 
 - the problem-report endpoint described above, and only when you choose to send
   a report;
-- a **machine-translation provider** (DeepL or Google), and only if you set up
-  the optional machine-translation feature and then generate a translated
-  track. In that case the subtitle text being translated is sent — together
-  with your own API key — directly from the extension's background worker to the
-  provider you chose. No translation request is ever made unless you both
-  configure a key and trigger a translation; the text and key go only to that
-  provider, never to the developer.
+- **DeepL** (the machine-translation provider), and only if you set up the
+  optional machine-translation feature and then generate a translated track. In
+  that case the subtitle text being translated is sent — together with your own
+  DeepL API key — directly from the extension's background worker to DeepL. No
+  translation request is ever made unless you both configure a key and trigger a
+  translation; the text and key go only to DeepL, never to the developer.
 
 ## Permissions
 
 - **`storage`** — to save your settings, the subtitle cache, your custom
   sources, and (if set) your translation API key. This is the only permission
   requested at install time.
-- **Optional host access to `api-free.deepl.com`, `api.deepl.com`, and
-  `translation.googleapis.com`** — requested only when you enable machine
-  translation, so the background worker can reach the provider. If you never use
-  that feature, it is never requested, and you can revoke it any time from
-  Chrome's extension settings.
+- **Optional host access to `api-free.deepl.com` and `api.deepl.com`** —
+  requested only when you enable machine translation, so the background worker
+  can reach DeepL. If you never use that feature, it is never requested, and you
+  can revoke it any time from Chrome's extension settings.
 
 The extension's content scripts run only on `www.crunchyroll.com` pages.
 
@@ -95,9 +93,9 @@ only relays it) and a private chat channel; these process the report on the
 developer's behalf and for no other purpose.
 
 If you enable machine translation, the subtitle text you translate is sent to
-the provider **you** chose (DeepL or Google) under **your own** API key and
-their terms and privacy policy — a direct relationship between you and that
-provider, with the developer neither involved in nor able to see it.
+**DeepL** under **your own** API key and their terms and privacy policy — a
+direct relationship between you and DeepL, with the developer neither involved
+in nor able to see it.
 
 ## Contact
 

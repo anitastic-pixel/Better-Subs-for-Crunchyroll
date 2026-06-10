@@ -1010,8 +1010,8 @@
 
   // ── Machine translation (BYOK) ────────────────────────────────────────────
   // The MAIN world can't reach the service worker, so translation rides a
-  // token-guarded RPC over postMessage: interceptor → content.js → SW → DeepL/
-  // Google.  The user's key never enters this world; the SW attaches it.  A
+  // token-guarded RPC over postMessage: interceptor → content.js → SW → DeepL.
+  // The user's key never enters this world; the SW attaches it.  A
   // translated track becomes a kind:'mt' custom source — its timing comes from
   // the source CR track (already on the current cut), so no sync is needed, and
   // persisting it via the registry means re-selecting later costs no quota.
@@ -1363,7 +1363,7 @@
     mtSetOptions(toSel,   MT_TARGET_OPTIONS,              target);
     mtSetOptions(fromSel, validSourceOptions(ep, target), getMtSourcePref() || '');
     panel.querySelector('[data-row="prov"]').textContent =
-      `Provider: ${MT_PROVIDER_LABELS[getMtProvider()] ?? getMtProvider()} — change in the extension popup`;
+      `Engine: ${MT_PROVIDER_LABELS[getMtProvider()] ?? 'DeepL'}`;
     // Persist on change so choices stick across episodes (no re-picking); rebuild
     // From when the target changes (can't translate a language into itself).
     toSel.addEventListener('change', () => {
@@ -1784,9 +1784,9 @@
     ['it-IT', 'Italiano'], ['ru-RU', 'Русский'],
   ];
   const getMtProvider = () => SETTINGS.read(html, 'mtProvider') || 'deepl';
-  const MT_PROVIDER_LABELS = { deepl: 'DeepL', google: 'Google', gemini: 'Gemini' };
-  // MT tracks are keyed by target AND provider so e.g. a DeepL and a Google
-  // Japanese track coexist as separate, switchable rows for A/B comparison.
+  const MT_PROVIDER_LABELS = { deepl: 'DeepL' };
+  // MT tracks are keyed by target AND provider (provider is always 'deepl' now,
+  // but the key shape is kept stable so existing saved tracks still resolve).
   const mtId = (target, provider) => `custom:mt:${target}:${provider}`;
 
   // Runtime-tunable throughput knobs so the sweet spot for each API can be found
@@ -1796,16 +1796,15 @@
   // Note the trade-off: a SMALLER batch means MORE requests (worse for per-minute
   // and per-day caps); a LARGER `pace` is slower but safer.  Defaults are
   // deliberately conservative.
-  function mtTuning(provider) {
-    const g = provider === 'gemini';
+  function mtTuning() {
     const num = (k, d) => {
       try { const v = parseInt(localStorage.getItem(k), 10); return (isFinite(v) && v >= 0) ? v : d; }
       catch (_) { return d; }
     };
     return {
-      batch:    Math.max(1, num('crSubFix_mt_batch',    g ? 30 : 50)),  // fewest requests = least throttling
-      pace:     num('crSubFix_mt_pace',     g ? 5000 : 1200),  // ms between batches
-      timeout:  num('crSubFix_mt_timeout',  g ? 40000 : 60000),
+      batch:    Math.max(1, num('crSubFix_mt_batch',    50)),   // DeepL is a per-text NMT API — 50 texts/request
+      pace:     num('crSubFix_mt_pace',     1200),             // ms between batches
+      timeout:  num('crSubFix_mt_timeout',  60000),
       rateWait: num('crSubFix_mt_ratewait', 20000),            // ms to wait after a 429
       retries:  Math.max(1, num('crSubFix_mt_retries',  4)),
     };

@@ -59,7 +59,6 @@ const previewBox          = document.getElementById('previewBox');
 const togglePreviewAnimate = document.getElementById('togglePreviewAnimate');
 // Machine translation
 const toggleMtEnabled     = document.getElementById('toggleMtEnabled');
-const mtProvider          = document.getElementById('mtProvider');
 const mtApiKey            = document.getElementById('mtApiKey');
 const mtSave              = document.getElementById('mtSave');
 const mtStatus            = document.getElementById('mtStatus');
@@ -422,12 +421,6 @@ function populateFromSettings(s) {
   // Machine translation selectors (the API key is NOT a schema setting — it's
   // loaded/saved separately so it never enters the synced settings bundle).
   if (toggleMtEnabled) toggleMtEnabled.checked = s.mtEnabled !== false;
-  if (mtProvider) {
-    mtProvider.value = s.mtProvider ?? 'deepl';
-    // A stored provider no longer offered (e.g. the removed Google Cloud option)
-    // won't select — fall back to DeepL and persist the correction.
-    if (!mtProvider.value) { mtProvider.value = 'deepl'; chrome.storage.local.set({ mtProvider: 'deepl' }); }
-  }
 
   updatePreview();
 }
@@ -444,18 +437,15 @@ loadFromStorage();
 // this click — a user gesture, required by chrome.permissions.request).
 let mtHasKey = false;
 
-function mtHostsFor(provider) {
-  if (provider === 'gemini') return ['https://generativelanguage.googleapis.com/*'];
-  return ['https://api-free.deepl.com/*', 'https://api.deepl.com/*'];
-}
+const MT_HOSTS = ['https://api-free.deepl.com/*', 'https://api.deepl.com/*'];
 
 function refreshMtStatus() {
   if (!mtStatus) return;
-  chrome.storage.local.get(['mtApiKey', 'mtProvider'], ({ mtApiKey: key, mtProvider: prov }) => {
+  chrome.storage.local.get(['mtApiKey'], ({ mtApiKey: key }) => {
     mtHasKey = !!key;
     if (mtApiKey) mtApiKey.placeholder = mtHasKey ? 'Key saved — paste to replace' : 'Paste your API key';
     if (!mtHasKey) { mtStatus.textContent = ''; return; }
-    chrome.permissions.contains({ origins: mtHostsFor(prov || 'deepl') }, (granted) => {
+    chrome.permissions.contains({ origins: MT_HOSTS }, (granted) => {
       if (granted) { mtStatus.textContent = '✓ Enabled — key stored on this device'; mtStatus.style.color = '#16e0a8'; }
       else         { mtStatus.textContent = '⚠ Click “Save & enable” to grant network access'; mtStatus.style.color = '#cc9900'; }
     });
@@ -466,26 +456,18 @@ refreshMtStatus();
 toggleMtEnabled?.addEventListener('change', () => {
   chrome.storage.local.set({ mtEnabled: toggleMtEnabled.checked });
 });
-mtProvider?.addEventListener('change', () => {
-  chrome.storage.local.set({ mtProvider: mtProvider.value });
-  refreshMtStatus();
-});
-
 mtSave?.addEventListener('click', () => {
-  const provider = mtProvider.value;
-  const key      = mtApiKey.value.trim();
+  const key = mtApiKey.value.trim();
   if (!key && !mtHasKey) {
     mtStatus.textContent = 'Paste your API key first.';
     mtStatus.style.color = '#cc9900';
     return;
   }
-  // Save the key/provider FIRST, unconditionally — so MT registers as configured
-  // (and the in-player "Translate" row appears) even if the permission prompt is
-  // deferred or denied.  Then request the host permission in the same gesture.
-  const toSet = { mtProvider: provider };
-  if (key) toSet.mtApiKey = key;
-  chrome.storage.local.set(toSet, () => { if (key) mtApiKey.value = ''; });
-  chrome.permissions.request({ origins: mtHostsFor(provider) }, (granted) => {
+  // Save the key FIRST, unconditionally — so MT registers as configured (and the
+  // in-player "Translate" row appears) even if the permission prompt is deferred
+  // or denied.  Then request the DeepL host permission in the same gesture.
+  if (key) chrome.storage.local.set({ mtApiKey: key }, () => { mtApiKey.value = ''; });
+  chrome.permissions.request({ origins: MT_HOSTS }, (granted) => {
     refreshMtStatus();
     if (!granted) {
       mtStatus.textContent = '⚠ Key saved — click “Allow” on the permission prompt to enable translation.';

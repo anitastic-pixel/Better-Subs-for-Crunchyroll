@@ -951,23 +951,15 @@
     <div class="row col sm" style="background:transparent;padding:4px 2px;">
       <div class="row-sub" style="color:#888;line-height:1.5;">
         Fill in a language Crunchyroll doesn't carry — e.g. Japanese — by machine-translating
-        an existing track. Bring your own <a href="https://www.deepl.com/pro-api" target="_blank" style="color:#9ecbff;">DeepL</a>
-        or <a href="https://cloud.google.com/translate" target="_blank" style="color:#9ecbff;">Google</a> API key.
-        It's stored only on this device and sent only to the provider you choose.
+        an existing track. Bring your own <a href="https://www.deepl.com/pro-api" target="_blank" style="color:#9ecbff;">DeepL</a> API key
+        (the free tier covers ~500k characters/month).
+        It's stored only on this device and sent only to DeepL.
         <b style="color:#b08cff;">Machine output is an approximation, not authored subtitles.</b>
       </div>
 
       <div class="row sm">
         <span class="row-label" style="font-size:11px">Enable machine translation</span>
         <label class="toggle"><input type="checkbox" id="toggleMtEnabled" /><span class="slider"></span></label>
-      </div>
-
-      <div class="row sm">
-        <span class="row-label" style="font-size:11px">Provider</span>
-        <select id="mtProvider" style="flex:1;width:auto;margin-left:14px;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:5px 9px;font-size:11px;font-family:inherit;cursor:pointer;">
-          <option value="deepl">DeepL</option>
-          <option value="gemini">Google Gemini (AI — better register)</option>
-        </select>
       </div>
 
       <div class="row-sub" style="color:#777;line-height:1.5;margin-top:2px;">
