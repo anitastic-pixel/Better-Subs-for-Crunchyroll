@@ -1150,6 +1150,12 @@
     const BATCH = TUNE.batch;
     const PACE  = TUNE.pace;
     const texts = cues.map(c => c.text);
+    // Also translate the base track's typeset signs: extract their text and append
+    // it to the batch so it rides the same retry/resume/quota path as dialogue.
+    const signsBase = buildSignsAss(baseRawAss);
+    const signParse = signsBase ? extractSignTexts(signsBase) : null;
+    const nDlg = texts.length;                                   // dialogue / signs split point
+    if (signParse && signParse.texts.length) texts.push(...signParse.texts);
     const out   = new Array(texts.length);
 
     // Resume any saved partial progress for this exact (guid,source,target,provider).
@@ -1163,7 +1169,7 @@
     for (let i = 0; i < texts.length; i++) if (out[i] == null) todo.push(i);
 
     log.info(`Translate cfg: provider=${provider} batch=${BATCH} pace=${PACE}ms timeout=${TUNE.timeout}ms ` +
-             `rateWait=${TUNE.rateWait}ms retries=${TUNE.retries} cues=${cues.length} resumed=${resumed} todo=${todo.length}`);
+             `rateWait=${TUNE.rateWait}ms retries=${TUNE.retries} cues=${cues.length} signs=${signParse ? signParse.texts.length : 0} resumed=${resumed} todo=${todo.length}`);
 
     _translating = true;
     _translateCancel = false;
@@ -1220,16 +1226,16 @@
 
     // Complete — build the track, drop the partial cache.
     const mtCues = cues.map((c, k) => ({ ...c, text: out[k] || c.text, srcText: c.text }));
+    // Put the sign translations (the tail of `out`) back into the signs .ass; a
+    // missing one keeps its source-language text.  null = base has no signs.
+    const signRawAss = signParse ? rebuildSignsAss(signParse, out.slice(nDlg)) : (signsBase || null);
     ep.addCustomSource({
       id, kind: 'mt',
       label: `${tLabel} (${pLabel})`,
       lang:  target,
       mtSource: source,
       srcCues: mtCues,
-      // Carry the base CR track's typeset signs so the MT Source keeps showing
-      // them instead of dropping the sign layer.  buildSignsAss → just the \pos
-      // lines (+ headers), or null if the base has none / is VTT.
-      signRawAss: buildSignsAss(baseRawAss),
+      signRawAss,   // base track's typeset signs, translated to the target
       sync:  { mode: 'none' },
     });
     STORAGE.lsDel(partKey);
@@ -2384,6 +2390,36 @@
       out.push(l);                                          // comments etc.
     }
     return hasSign ? out.join('\n') : null;
+  }
+  // MT sign translation: pull the translatable text out of each \pos sign line so
+  // it can ride the dialogue MT batch, then put the translations back.  Returns
+  // { lines, texts, slots } where slots[i] maps texts[i] to its source line; the
+  // tags before the text are preserved, mid-text override blocks are dropped
+  // (rare in typeset; their formatting is lost but the text is translated).
+  function extractSignTexts(signsAss) {
+    const lines = (signsAss || '').split('\n');
+    const texts = [], slots = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^Dialogue\s*:/i.test(lines[i])) continue;
+      const m = lines[i].match(/^(Dialogue\s*:(?:[^,]*,){9})(.*)$/i);
+      if (!m) continue;
+      const lead = (m[2].match(/^(?:\{[^}]*\})*/) || [''])[0];   // leading override block(s)
+      const body = m[2].slice(lead.length)
+        .replace(/\{[^}]*\}/g, '')                               // drop mid-text tags
+        .replace(/\\[Nn]/g, '\n').replace(/\\h/g, ' ');          // decode line breaks
+      if (!/[^\s]/.test(body)) continue;                         // nothing to translate
+      slots.push({ lineIdx: i, head: m[1] + lead });
+      texts.push(body.trim());
+    }
+    return { lines, texts, slots };
+  }
+  function rebuildSignsAss(parsed, translations) {
+    const { lines, slots } = parsed;
+    for (let i = 0; i < slots.length; i++) {
+      if (translations[i] == null) continue;
+      lines[slots[i].lineIdx] = slots[i].head + String(translations[i]).replace(/\n/g, '\\N');
+    }
+    return lines.join('\n');
   }
   function pushSignLayer() {
     let ass = null;
