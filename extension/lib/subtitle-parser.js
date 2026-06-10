@@ -154,7 +154,8 @@
           const ch   = f[stColor]?.trim().match(/&H([0-9A-Fa-f]{6,8})&/)?.[1];
           const och  = f[stOutlineColor]?.trim().match(/&H([0-9A-Fa-f]{6,8})&/)?.[1];
           const bch  = f[stBackColor]?.trim().match(/&H([0-9A-Fa-f]{6,8})&/)?.[1];
-          if (name) styles[name] = {
+          // Reject attacker-controlled style names that would pollute the prototype.
+          if (name && name !== '__proto__' && name !== 'constructor') styles[name] = {
             fontName:    f[stFontname]?.trim()          || null,
             alignment:   parseInt(f[stAlign])           || 2,
             fontSize:    parseFloat(f[stSize])          || null,

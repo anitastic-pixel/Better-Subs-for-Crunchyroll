@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Better Subs for Crunchyroll",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Mix and match subtitle and audio languages on Crunchyroll, with a custom subtitle overlay and adjustable size, sync, and style.",
-  "minimum_chrome_version": "88",
+  "minimum_chrome_version": "111",
   "permissions": ["storage"],
   "optional_host_permissions": [
     "https://api-free.deepl.com/*",

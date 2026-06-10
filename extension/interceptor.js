@@ -94,14 +94,20 @@
   })();
   const TRACE_KEY = 'crSubFix_trace';
   const TRACE_MAX = 400;
+  // Strip signed-URL query strings, emails, and long hex tokens.  Applied at trace
+  // WRITE time so secrets never sit in sessionStorage (also reused for the report).
+  const redactSensitive = (s) => String(s)
+    .replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>')
+    .replace(/[^\s@|]+@[^\s@|]+\.[^\s@|]+/g, '<email>')
+    .replace(/\b[0-9a-f]{32,}\b/gi, '<id>');
   const traceMirror = (level, args) => {
     try {
       const arr  = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]');
       const guid = (location.pathname.split('/')[2] || '?').slice(0, 9);
-      arr.push(`${Date.now()} ${guid} [${level}] ` + args.map(a => {
+      arr.push(redactSensitive(`${Date.now()} ${guid} [${level}] ` + args.map(a => {
         try { return typeof a === 'string' ? a : JSON.stringify(a); }
         catch (_) { return String(a); }
-      }).join(' '));
+      }).join(' ')));
       while (arr.length > TRACE_MAX) arr.shift();
       sessionStorage.setItem(TRACE_KEY, JSON.stringify(arr));
     } catch (_) {}
@@ -3464,10 +3470,7 @@
     // Keep the MOST RECENT trace that fits the budget (the Worker's embed holds
     // ~4000) — trimming from the front preserves the lines just before the error.
     const header = lines.join('\n');
-    const redact = (s) => s
-      .replace(/(https?:\/\/[^\s|?]+)\?[^\s|]*/gi, '$1?<redacted>')   // strip signed-URL query
-      .replace(/[^\s@|]+@[^\s@|]+\.[^\s@|]+/g, '<email>')             // emails
-      .replace(/\b[0-9a-f]{32,}\b/gi, '<id>');                        // long hex (tokens/ids)
+    const redact = redactSensitive;   // trace is already redacted at write time; idempotent here
     let trace = [];
     try { trace = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]'); } catch (_) {}
     let tail = trace.map(redact).join('\n');
