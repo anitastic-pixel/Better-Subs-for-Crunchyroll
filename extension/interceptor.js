@@ -1138,7 +1138,10 @@
     const fetched = await fetchCuesForLocale(ep, source);
     if (ep.disposed) { hud.fade(); return; }
     const cues       = fetched && fetched.cues;
-    const baseRawAss = fetched && fetched.rawText;   // base track's .ass (for its signs)
+    // fetched.rawText comes from the sessionStorage raw cache, which can miss
+    // under quota pressure — fall back to the active source's in-memory raw
+    // (translating FROM the active source is the common case anyway).
+    const baseRawAss = (fetched && fetched.rawText) || _signRawAss;
     if (!cues || !cues.length) {
       hud.fade();
       showErrorToast('Could not load the source subtitles to translate.');

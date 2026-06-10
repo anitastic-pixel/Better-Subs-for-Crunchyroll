@@ -165,6 +165,10 @@
   const FONT_TIMES = () => FONT_URL('Tinos-Regular.ttf');
   const FONT_SANS  = () => FONT_URL('Arimo.ttf');
   const FONT_MONO  = () => FONT_URL('Cousine-Regular.ttf');
+  const FONT_CJK   = () => FONT_URL('NotoSansKR.ttf');   // Hangul + CJK ideographs
+  // MT-translated signs in CJK scripts render as tofu boxes with the Latin faces
+  // above; detect CJK in the .ass so libass loads the (10MB) CJK font ONLY then.
+  const hasCJK = (s) => /[ᄀ-ᇿ　-ヿ㄰-鿿가-힯豈-﫿]/.test(s || '');
   // "Original" path: map the .ass's own font names to bundled equivalents so
   // signs keep CR's serif/sans intent; unmatched names fall back to Tinos.
   const AVAILABLE_FONTS = () => ({
@@ -186,12 +190,13 @@
   // picked a sign font (sign_styleOverride + sign_overrideFontFamily), force
   // EVERY sign into that one face (omit availableFonts → all use fallbackFont);
   // otherwise keep the "Original" per-name mapping that matches CR.
-  function octopusFontOpts() {
+  function octopusFontOpts(ass) {
     const s = latestSettings || {};
+    const cjk = hasCJK(ass) ? { fonts: [FONT_CJK()] } : {};   // CJK fallback only when the signs need it
     if (s.sign_styleOverride && s.sign_overrideFontFamily) {
-      return { fallbackFont: signFontFileUrl(s.sign_overrideFontFamily) };
+      return { fallbackFont: signFontFileUrl(s.sign_overrideFontFamily), ...cjk };
     }
-    return { fallbackFont: FONT_TIMES(), availableFonts: AVAILABLE_FONTS() };
+    return { fallbackFont: FONT_TIMES(), availableFonts: AVAILABLE_FONTS(), ...cjk };
   }
 
   // CSS #rrggbb + 0-100 opacity → ASS &HAABBGGRR (alpha inverted: 00=opaque).
@@ -253,8 +258,12 @@
           set('borderstyle',   box ? 3 : 1);
         }
         lines[i] = 'Style:' + vals.join(',');
-      } else if ((force || box) && /^Dialogue\s*:/i.test(line)) {
+      } else if ((force || box || scale !== 1) && /^Dialogue\s*:/i.test(line)) {
         let l = line;
+        // Scale inline \fs too: typeset signs usually set their own size (which
+        // OVERRIDES the Style Fontsize), so scaling the Style alone leaves them
+        // unchanged.  \fscx/\fscy ride on \fs, so this resizes them proportionally.
+        if (scale !== 1) l = l.replace(/\\fs(\d+(?:\.\d+)?)/g, (_, n) => '\\fs' + +(parseFloat(n) * scale).toFixed(2));
         // Force-colour: drop the sign's own primary colour so the override wins
         // (\t(...) colour/transform animations + static \c / \1c).
         if (force) l = l.replace(/\\t\([^)]*\)/g, '').replace(/\\1?c&H[0-9a-fA-F]+&/gi, '');
@@ -278,7 +287,7 @@
   function refreshOctopusStyle() {
     if (!octopus || !octopusAss) return;
     const ass = octopusAss;
-    if (JSON.stringify(octopusFontOpts()) !== octopusFontKey) { destroyOctopus(); setOctopusAss(ass); return; }
+    if (JSON.stringify(octopusFontOpts(ass)) !== octopusFontKey) { destroyOctopus(); setOctopusAss(ass); return; }
     try {
       octopus.setTrack(styleSignsAss(ass));
       // setTrack only queues the new .ass to the worker; libass repaints only on
@@ -313,7 +322,13 @@
     if (!video) { console.warn('[CR Sub Fix] no <video> for libass yet'); return; }
     if (octopus && octopusAss === ass && octopusVideo === video) return;       // unchanged
     if (octopus && octopusVideo === video) {                                   // same video, new track
-      try { octopus.setTrack(styleSignsAss(ass)); octopusAss = ass; return; } catch (_) { destroyOctopus(); }
+      // Same font set → just re-feed the track; but if it changed (e.g. the new
+      // .ass has CJK and now needs the CJK font on the FS), rebuild instead.
+      if (JSON.stringify(octopusFontOpts(ass)) === octopusFontKey) {
+        try { octopus.setTrack(styleSignsAss(ass)); octopusAss = ass; return; } catch (_) { destroyOctopus(); }
+      } else {
+        destroyOctopus();
+      }
     }
     let workerUrl;
     try { workerUrl = await octopusWorkerUrl(); }
@@ -325,7 +340,7 @@
     octopusVideo = v; octopusAss = ass;
     try {
       dlog('[CR Sub Fix] starting libass (' + ass.length + ' chars of signs)…');
-      const fontOpts = octopusFontOpts();
+      const fontOpts = octopusFontOpts(ass);
       octopusFontKey = JSON.stringify(fontOpts);
       octopus = new SO({
         video: v,
