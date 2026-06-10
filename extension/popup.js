@@ -395,12 +395,15 @@ function populateFromSettings(s) {
 
   toggleBgGlass.checked      = sp.overrideBgGlass;
   glassControls.classList.toggle('disabled', !sp.overrideBgGlass);
-  // Signs render through libass, which can't do CSS backdrop-blur, so the glass
-  // effect is dialogue-only — hide its row + controls when editing signs.
+  // Signs render through libass, which can't do CSS backdrop-blur OR rounded-box
+  // corners — so the glass effect and corner radius are dialogue-only; hide both
+  // when editing signs (otherwise their sliders look live but do nothing).
   const isSignsType = styleTarget === 'signs';
   const glassRow = toggleBgGlass.closest('.row');
   if (glassRow) glassRow.style.display = isSignsType ? 'none' : '';
   glassControls.style.display          = isSignsType ? 'none' : '';
+  const radiusRow = bgRadius.closest('.row');
+  if (radiusRow) radiusRow.style.display = isSignsType ? 'none' : '';
   // Force-text-colour is signs-only (CSS dialogue colour always applies anyway).
   forceColorRow.style.display = isSignsType ? '' : 'none';
   toggleForceColor.checked    = !!s.sign_forceColor;
