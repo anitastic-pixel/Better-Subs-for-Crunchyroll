@@ -330,6 +330,53 @@
       return container;
     }
 
+    // Dual subtitles: a second locale's dialogue, rendered as a bottom-centred
+    // band sitting just ABOVE the primary bottom dialogue.  Built like the
+    // alignment-2 group but anchored via `bottom` (set by positionSecondaryBand
+    // after the primary is measured) so it stacks without overlap on any aspect.
+    function buildSecondaryBand(cues, box, currentTime, sc) {
+      const band = document.createElement('div');
+      Object.assign(band.style, {
+        position:      'absolute',
+        left:          '50%',
+        transform:     'translateX(-50%)',
+        maxWidth:      '90%',
+        display:       'flex',
+        flexDirection: 'column',
+        alignItems:    'center',
+        gap:           '4px',
+        textAlign:     'center',
+        pointerEvents: 'none',
+      });
+      for (const cue of cues) {
+        const fz    = calcFontSize(cue, box.w, box.h);
+        const lines = cue.text.split('\n').slice(0, MAX_LINES);
+        const cueEl = document.createElement('div');
+        cueEl.style.textAlign = 'center';
+        appendLines(cueEl, lines, cue, fz, sc, 'center');
+        applyFades(cueEl, cue, currentTime);
+        band.appendChild(cueEl);
+      }
+      return band;
+    }
+
+    // Place the secondary band's bottom edge just above the primary bottom
+    // group's top (measured), so dual lines stack cleanly.  Falls back to the
+    // bottom-margin floor + ~one line when there's no primary bottom group.
+    function positionSecondaryBand(band, box, primaryBottomEl) {
+      const gap = Math.max(4, box.h * 0.012);
+      if (primaryBottomEl) {
+        const oRect = overlayEl.getBoundingClientRect();
+        const pRect = primaryBottomEl.getBoundingClientRect();
+        band.style.bottom = `${Math.round((oRect.bottom - pRect.top) + gap)}px`;
+      } else {
+        const overlayH = overlayEl.offsetHeight || box.h;
+        const floorPct = getSubBottomFloor?.() ?? 6;
+        const fromBottom = (overlayH - (box.y + box.h)) + box.h * (floorPct / 100) + box.h * 0.07;
+        band.style.bottom = `${Math.round(fromBottom)}px`;
+      }
+    }
+
     function ensureOverlay() {
       let el = document.getElementById(OVERLAY_ID);
       if (el) return el;
@@ -342,12 +389,13 @@
         width:         '100%',
         height:        '100%',
         pointerEvents: 'none',
-        // Just above the <video> element, but well below Crunchyroll's
-        // player chrome — so the scrub-preview thumbnail and controls
-        // render over the subtitles like CR's own subs do, instead of
-        // the subs popping through.  Was 2147483640 to clip-defeat
-        // any chrome; that intent is no longer wanted.
-        zIndex:        '2',
+        // Sit ABOVE the <video> (it's absolutely positioned over it) but BELOW
+        // all of Crunchyroll's player chrome — controls AND the scrub-preview
+        // thumbnail — so they render over the subtitles like CR's own subs do.
+        // z-index 0 (not 2): the chrome layers are positive-z-index, and at 2 the
+        // subs popped through the hover preview.  Was 2147483640 originally to
+        // clip-defeat chrome; that intent is no longer wanted.
+        zIndex:        '0',
         display:       'none',
         overflow:      'hidden',
       });
@@ -384,10 +432,20 @@
 
     function reparentForFullscreen(fsEl) {
       if (!overlayEl) return;
-      const target = fsEl ?? videoEl?.parentElement ?? document.body;
+      // Keep the overlay in the video's own parent when that parent is already
+      // inside the fullscreen element (the usual case) — hoisting it up to the
+      // fullscreen element's top level would, by DOM order, stack the subtitles
+      // ABOVE the player controls + scrub preview (the windowed z-index:0 only
+      // works because the overlay sits in a sub-container below the chrome).
+      // Only reparent to fsEl when the video's parent isn't contained in it, so
+      // the overlay would otherwise fall outside the fullscreen view.
+      const pref = videoEl?.parentElement;
+      const target = fsEl
+        ? ((pref && fsEl.contains(pref)) ? pref : fsEl)
+        : (pref ?? document.body);
       if (overlayEl.parentElement !== target) {
-        if (fsEl && window.getComputedStyle(fsEl).position === 'static') {
-          fsEl.style.position = 'relative';
+        if (target !== document.body && window.getComputedStyle(target).position === 'static') {
+          target.style.position = 'relative';
         }
         target.appendChild(overlayEl);
       }
@@ -427,21 +485,25 @@
 
     function invalidate() { lastCueKey = ''; }
 
-    function render(cues, currentTime, styleCtx) {
+    function render(cues, currentTime, styleCtx, secondaryCues) {
       if (!overlayEl) return;
-      if (cues.length === 0) { overlayEl.style.display = 'none'; return; }
+      const hasSecondary = !!(secondaryCues && secondaryCues.length);
+      if (cues.length === 0 && !hasSecondary) { overlayEl.style.display = 'none'; return; }
 
       // styleCtx is { dialogue, signs } — two flat profiles.  Split them; each
-      // builder gets its own so signs and dialogue style independently.
+      // builder gets its own so signs and dialogue style independently.  The
+      // secondary band uses the dialogue profile (it's dialogue from another
+      // locale), so the user's style override applies to both lines.
       const dlgCtx  = (styleCtx && styleCtx.dialogue) || { override: false };
       const signCtx = (styleCtx && styleCtx.signs)    || { override: false };
 
-      // Cue-key cache suppresses redundant renders.  Includes BOTH profiles so a
-      // settings change (popup → data attr → MutationObserver → render) busts the
-      // cache and repaints; JSON.stringify of the flat literals is deterministic.
+      // Cue-key cache suppresses redundant renders.  Includes BOTH profiles plus
+      // the secondary cues so a settings change or a secondary line in/out busts
+      // the cache and repaints; JSON.stringify of the flat literals is deterministic.
       const cueKey = cues.map(c => `${c.start}:${c.end}`).join('|');
+      const secKey = hasSecondary ? secondaryCues.map(c => `${c.start}:${c.end}`).join('|') : '';
       const ctxKey = styleCtx ? JSON.stringify(styleCtx) : '';
-      const key = `${ctxKey}||${cueKey}`;
+      const key = `${ctxKey}||${cueKey}||S:${secKey}`;
       if (key === lastCueKey) return;
       lastCueKey = key;
 
@@ -460,6 +522,9 @@
         if (cue.pos) overlayEl.appendChild(createCueEl(cue, box, currentTime, signCtx));
       }
 
+      // Grouped dialogue by alignment; remember the bottom-centre (an=2) group so
+      // the secondary band can be stacked directly above it.
+      let primaryBottomEl = null;
       const byAlignment = {};
       for (const cue of cues) {
         if (cue.pos) continue;
@@ -467,7 +532,15 @@
         (byAlignment[an] ??= []).push(cue);
       }
       for (const [an, group] of Object.entries(byAlignment)) {
-        overlayEl.appendChild(createGroupEl(parseInt(an), group, box, currentTime, dlgCtx));
+        const el = createGroupEl(parseInt(an), group, box, currentTime, dlgCtx);
+        overlayEl.appendChild(el);
+        if (parseInt(an) === 2) primaryBottomEl = el;
+      }
+
+      if (hasSecondary) {
+        const band = buildSecondaryBand(secondaryCues, box, currentTime, dlgCtx);
+        overlayEl.appendChild(band);
+        positionSecondaryBand(band, box, primaryBottomEl);
       }
     }
 

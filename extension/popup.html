@@ -5,16 +5,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Better Subs for Crunchyroll</title>
   <style>
+    /* ── Design tokens ────────────────────────────────────────────────────
+       One place for the popup's palette + shape.  The popup is its own page
+       (it can't import the MAIN-world lib/ui-theme.js), so it carries its own
+       CSS-variable mirror of the same intent: our accent, dark panels, dim
+       text ramp.  Change a value here, not in fifty inline styles. */
+    :root {
+      --accent:      #ff6b35;
+      --accent-weak: rgba(255,107,53,0.12);
+      --accent-line: rgba(255,107,53,0.5);
+
+      --bg:        #1a1a2e;   /* popup body */
+      --panel:     #16213e;   /* standard row */
+      --panel-2:   #0f0f1e;   /* insets: status bar, inputs, selects, badges */
+      --panel-3:   #1e2b47;   /* offset buttons */
+      --panel-3h:  #2a3a5c;   /* offset button hover */
+
+      --border:   rgba(255,255,255,0.06);
+      --border-2: rgba(255,255,255,0.15);
+
+      --text:      #e0e0e0;
+      --text-2:    #cccccc;
+      --text-dim:  #8a8a9a;
+      --text-mute: #666666;
+      --text-faint:#555555;
+
+      --ok:     #16e0a8;
+      --link:   #9ecbff;
+      --mt:     #b08cff;
+      --coffee: #d9a93e;
+
+      --radius:    8px;
+      --radius-sm: 6px;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       width: 310px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #1a1a2e;
-      color: #e0e0e0;
+      background: var(--bg);
+      color: var(--text);
       padding: 14px;
+      /* Draw native controls (incl. <select> dropdown popups) dark, so our light
+         option text isn't invisible on a default-white popup. */
+      color-scheme: dark;
     }
 
+    /* ── Small reusable helpers (replace one-off inline styles) ── */
+    .muted  { font-size: 10px; color: var(--text-dim); line-height: 1.5; }
+    .center { text-align: center; }
+    .t-sm   { font-size: 11px; }
+    a.link  { color: var(--link); text-decoration: underline; }
+    a.link.plain { text-decoration: none; }
+
+    /* ── Header ── */
     .app-header {
       display: flex;
       align-items: center;
@@ -29,18 +74,18 @@
     header h1 {
       font-size: 14px;
       font-weight: 700;
-      color: #ff6b35;
+      color: var(--accent);
       letter-spacing: 0.3px;
       line-height: 1.1;
     }
-    .app-sub { color: #8a8a9a; font-weight: 600; }
+    .app-sub { color: var(--text-dim); font-weight: 600; }
     .app-version {
       margin-left: auto;
       font-size: 9px;
       font-weight: 600;
       color: #6a6a7a;
-      background: #0f0f1e;
-      border: 1px solid rgba(255,255,255,0.06);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
       border-radius: 5px;
       padding: 2px 6px;
       letter-spacing: 0.3px;
@@ -51,52 +96,56 @@
       display: flex;
       align-items: center;
       gap: 9px;
-      background: #0f0f1e;
+      background: var(--panel-2);
       border: 1px solid rgba(255,255,255,0.05);
       border-radius: 7px;
       padding: 9px 12px;
       margin-bottom: 12px;
     }
-
     .status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
-      background: #555;
+      background: var(--text-faint);
       transition: background 0.3s;
     }
     .status-dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .status-text { font-size: 12px; color: var(--text-2); font-weight: 500; }
+    /* Initial hidden state is inline on the element (see markup) so popup.js can
+       reveal it with style.display='' — keep no display rule here. */
+    .status-detail { font-size: 10px; color: var(--text-mute); letter-spacing: 0.3px; }
 
-    .status-text { font-size: 12px; color: #ccc; font-weight: 500; }
-
-    /* ── Section rows ── */
+    /* ── Section + rows ── */
     .section { margin-bottom: 8px; }
 
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: #16213e;
-      border-radius: 8px;
+      background: var(--panel);
+      border-radius: var(--radius);
       padding: 10px 12px;
       margin-bottom: 6px;
     }
     .row.col { flex-direction: column; align-items: stretch; gap: 8px; }
     .row.sm  { padding: 7px 12px; }
-
-    .row-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    /* Master on/off — visually primary, since it gates everything below. */
+    .row.master {
+      background: var(--accent-weak);
+      border: 1px solid var(--accent-line);
     }
+    .row.master .row-label { font-weight: 700; }
+    /* A row that just carries prose/inputs, no panel fill. */
+    .row.bare { background: transparent; padding: 4px 2px; }
 
+    .row-header { display: flex; justify-content: space-between; align-items: center; }
     .row-label { font-size: 12px; font-weight: 500; }
-    .row-sub   { font-size: 10px; color: #666; margin-top: 2px; }
+    .row-sub   { font-size: 10px; color: var(--text-mute); margin-top: 2px; }
 
     .value-label {
       font-size: 11px;
-      color: #ff6b35;
+      color: var(--accent);
       font-weight: 600;
       min-width: 34px;
       text-align: right;
@@ -105,7 +154,6 @@
     /* ── Toggle switch ── */
     .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; }
-
     .slider {
       position: absolute;
       inset: 0;
@@ -123,7 +171,7 @@
       border-radius: 50%;
       transition: transform 0.2s;
     }
-    .toggle input:checked + .slider { background: #ff6b35; }
+    .toggle input:checked + .slider { background: var(--accent); }
     .toggle input:checked + .slider::before { transform: translateX(16px); }
 
     /* ── Range slider ── */
@@ -142,13 +190,13 @@
       appearance: none;
       width: 14px; height: 14px;
       border-radius: 50%;
-      background: #ff6b35;
+      background: var(--accent);
       cursor: pointer;
     }
     input[type="range"]::-moz-range-thumb {
       width: 14px; height: 14px;
       border-radius: 50%;
-      background: #ff6b35;
+      background: var(--accent);
       cursor: pointer;
       border: none;
     }
@@ -161,35 +209,25 @@
       font-size: 10px;
       font-weight: 600;
       font-family: inherit;
-      background: #1e2b47;
+      background: var(--panel-3);
       color: #b4b4c6;
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 6px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       cursor: pointer;
       transition: background 0.13s, color 0.13s, border-color 0.13s, transform 0.06s;
       white-space: nowrap;
     }
-    .offset-btns button:hover { background: #2a3a5c; color: #fff; border-color: rgba(255,255,255,0.16); }
+    .offset-btns button:hover { background: var(--panel-3h); color: #fff; border-color: rgba(255,255,255,0.16); }
     .offset-btns button:active { transform: translateY(1px); }
     .offset-btns button#offsetReset {
       flex: 0 0 30px;
       margin: 0 5px;
-      color: #ff6b35;
-      background: rgba(255,107,53,0.12);
-      border-color: rgba(255,107,53,0.5);
+      color: var(--accent);
+      background: var(--accent-weak);
+      border-color: var(--accent-line);
       font-weight: 700;
     }
-    .offset-btns button#offsetReset:hover { background: rgba(255,107,53,0.22); border-color: #ff6b35; color: #ff8c5a; }
-
-    /* ── Section divider ── */
-    .section-label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #444;
-      margin: 10px 4px 4px;
-    }
+    .offset-btns button#offsetReset:hover { background: rgba(255,107,53,0.22); border-color: var(--accent); color: #ff8c5a; }
 
     /* ── Sub-section label (inside style controls) ── */
     .sub-label {
@@ -197,7 +235,7 @@
       font-weight: 700;
       letter-spacing: 0.8px;
       text-transform: uppercase;
-      color: #555;
+      color: var(--text-faint);
       padding: 6px 2px 2px;
     }
 
@@ -221,43 +259,38 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      background: #16213e;
-      border-radius: 8px;
+      background: var(--panel);
+      border-radius: var(--radius);
       padding: 8px 12px;
       margin-bottom: 6px;
     }
-    .co-body {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
+    .co-body { flex: 1; display: flex; flex-direction: column; gap: 5px; }
 
-    /* ── Segmented control (Hard / Soft) ── */
+    /* ── Segmented control (Dialogue/Signs, Hard/Soft) ── */
     .seg-ctrl { display: flex; gap: 3px; }
     .seg-btn {
       padding: 3px 10px;
       font-size: 10px;
       font-weight: 600;
       font-family: inherit;
-      background: #0f0f1e;
-      color: #666;
+      background: var(--panel-2);
+      color: var(--text-mute);
       border: 1px solid #333;
       border-radius: 4px;
       cursor: pointer;
       transition: all 0.15s;
     }
     .seg-btn.active {
-      background: rgba(255,107,53,0.15);
-      color: #ff6b35;
-      border-color: #ff6b35;
+      background: var(--accent-weak);
+      color: var(--accent);
+      border-color: var(--accent);
     }
 
-    /* ── Font select ── */
+    /* ── Select ── */
     select {
       width: 100%;
-      background: #0f0f1e;
-      color: #e0e0e0;
+      background: var(--panel-2);
+      color: var(--text);
       border: 1px solid #333;
       border-radius: 4px;
       padding: 5px 6px;
@@ -266,33 +299,30 @@
       cursor: pointer;
       outline: none;
     }
-    select:focus { border-color: #ff6b35; }
+    select:focus { border-color: var(--accent); }
+    select.inline { flex: 1; width: auto; margin-left: 14px; border-color: var(--border-2); padding: 5px 9px; }
 
-    /* ── Style override disabled state ── */
+    /* ── Gated-control disabled states ── */
     .style-controls { transition: opacity 0.2s; }
     .style-controls.disabled { opacity: 0.3; pointer-events: none; }
-
-    /* ── Background sub-controls disabled state ── */
     .bg-controls { transition: opacity 0.2s; }
     .bg-controls.disabled { opacity: 0.35; pointer-events: none; }
 
-    /* ── Live preview ── */
-    /* Pinned to the top of the popup viewport whenever the Subtitle
-       appearance section is scrolled.  Lets the user see their changes
-       in real time while tuning sliders further down the panel. */
+    /* ── Live preview ──
+       Pinned to the top of the popup viewport whenever the Subtitle
+       appearance section is scrolled, so changes show in real time while
+       tuning sliders further down. */
     .preview-wrap {
       margin-bottom: 8px;
       position: sticky;
       top: 0;
-      background: #1a1a2e;
+      background: var(--bg);
       padding: 6px 0;
       z-index: 6;
     }
     .preview-box {
       /* Static composition built from the same five-blob palette the
-         animated mode uses, frozen at a pleasing arrangement.  Radial
-         gradients overlap like the animated blobs would at one instant.
-         Linear base behind them gives the dark margins their colour. */
+         animated mode uses, frozen at a pleasing arrangement. */
       background:
         radial-gradient(ellipse 55% 60% at 22% 28%, rgba(255,213,74,0.46), transparent 70%),
         radial-gradient(ellipse 48% 52% at 76% 60%, rgba(255,61,110,0.50), transparent 70%),
@@ -300,18 +330,15 @@
         radial-gradient(ellipse 42% 45% at 88% 14%, rgba(22,224,168,0.32), transparent 70%),
         radial-gradient(ellipse 55% 58% at 12% 85%, rgba(255,122,31,0.40), transparent 70%),
         linear-gradient(165deg, #1c0930 0%, #060309 100%);
-      border-radius: 8px;
+      border-radius: var(--radius);
       height: 115px;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       position: relative;
-      /* Vignette applies in both static and animated modes. */
       box-shadow: inset 0 0 55px 8px rgba(8,2,18,0.70);
     }
-    /* Film-grain overlay sits above the bg in both modes (and below the
-       blobs in animated mode — animated reorders via z-index). */
     .preview-box::after {
       content: '';
       position: absolute;
@@ -323,31 +350,11 @@
       background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='5'/><feColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 1 0'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>");
       background-size: 120px 120px;
     }
-    /* Procedural animated background: five colour blobs as real DOM
-       children, each with its own prime-number animation duration
-       (11/13/17/19/23 s) and its own keyframe path.
-       Polish layers applied here:
-         - .blob-stage wraps the blobs and slowly tilts (camera drift)
-         - blobs use plus-lighter for richer overlap colours
-         - per-blob keyframes animate scale (breathing) alongside translate
-         - a separate per-blob opacity animation fades blobs in/out
-         - .preview-box gets an inset vignette so blur edges don't band
-         - ::after overlay paints a faint SVG-turbulence grain on top */
-    .preview-box.animated {
-      /* Dark base hides the static multi-radial composition so the
-         animated blobs render cleanly with plus-lighter additive math.
-         Vignette and grain inherited from the base .preview-box rules. */
-      background: #0a0418;
-    }
+    .preview-box.animated { background: #0a0418; }
     .preview-box.animated .blob-stage {
       position: absolute;
       inset: -25%;
       animation: cr-stage-tilt 70s ease-in-out infinite alternate;
-      /* Cap the brightest values.  plus-lighter is unbounded, so where
-         3+ blobs cluster the result can approach pure white and flatten
-         the contrast against the subtitle pill.  brightness(0.85) pulls
-         every channel down ~15%, capping the ceiling while saturation
-         stays roughly intact. */
       filter: brightness(0.85) saturate(1.08);
     }
     @keyframes cr-stage-tilt {
@@ -366,8 +373,6 @@
     }
     .preview-box.animated .preview-sub { position: relative; z-index: 2; }
 
-    /* Slightly deeper / more saturated palette than before — compensates
-       for blur + blend desaturation so colours read closer to source. */
     .preview-box.animated .b1 {
       background: #ffd54a;
       width: 55%; height: 55%;
@@ -409,12 +414,6 @@
       animation-delay: -3s, -7s;
     }
 
-    /* Per-blob keyframes use a wide translate range (-35..120%) so blobs
-       traverse the whole preview and occasionally exit an edge before
-       re-entering elsewhere.  Closed-loop blobs (b2, b3, b5) repeat
-       0% at 100% so forward-only playback doesn't visibly jump.
-       Scale is woven into the existing translate keyframes so each blob
-       swells and shrinks as it drifts — "breathing" depth effect. */
     @keyframes cr-blob-1 {
       0%   { transform: translate(-35%,   5%) scale(1.00); }
       27%  { transform: translate( 95%,  60%) scale(1.18); }
@@ -452,12 +451,6 @@
       82%  { transform: translate( 25%,  30%) scale(1.10); }
       100% { transform: translate(-25%,  60%) scale(1.05); }
     }
-    /* Opacity breathing — each blob fades in/out on its own cycle,
-       independent of position.  Min opacity stays above 0.5 so the colour
-       presence is always felt; max 1 for full saturation. */
-    /* Per-blob max opacity capped at 0.85 (was 0.95-1.0) so individual
-       blobs don't go to full intensity — second axis of brightness
-       compression below the global filter:brightness(0.85). */
     @keyframes cr-breath-1 { 0% { opacity: 0.55; } 100% { opacity: 0.88; } }
     @keyframes cr-breath-2 { 0% { opacity: 0.48; } 100% { opacity: 0.82; } }
     @keyframes cr-breath-3 { 0% { opacity: 0.58; } 100% { opacity: 0.88; } }
@@ -482,18 +475,17 @@
     .app-footer {
       margin-top: 14px;
       padding-top: 10px;
-      border-top: 1px solid rgba(255,255,255,0.06);
+      border-top: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 5px;
       font-size: 10px;
-      color: #555;
+      color: var(--text-faint);
       text-align: center;
       line-height: 1.4;
     }
     .app-footer .kbd-hint { color: #777; }
-
     kbd {
       background: #222;
       border: 1px solid #444;
@@ -503,7 +495,7 @@
       font-size: 10px;
     }
 
-    /* ── Report an issue button ── */
+    /* ── Report / key inputs + buttons ── */
     .report-btn {
       width: 100%;
       padding: 8px 10px;
@@ -511,26 +503,26 @@
       font-size: 11px;
       font-weight: 600;
       font-family: inherit;
-      background: #0f0f1e;
-      color: #ff6b35;
-      border: 1px solid rgba(255,107,53,0.5);
-      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--accent);
+      border: 1px solid var(--accent-line);
+      border-radius: var(--radius-sm);
       cursor: pointer;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
-    .report-btn:hover { background: rgba(255,107,53,0.12); }
+    .report-btn:hover { background: var(--accent-weak); }
     .report-btn.ok {
-      color: #16e0a8;
+      color: var(--ok);
       border-color: rgba(22,224,168,0.6);
       background: rgba(22,224,168,0.08);
     }
     .report-btn[disabled] { opacity: 0.6; cursor: default; }
     .report-note {
       width: 100%;
-      background: #0f0f1e;
-      color: #e0e0e0;
+      background: var(--panel-2);
+      color: var(--text);
       border: 1px solid #333;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       padding: 7px 9px;
       margin-bottom: 6px;
       font-family: inherit;
@@ -538,7 +530,7 @@
       resize: vertical;
       outline: none;
     }
-    .report-note:focus { border-color: #ff6b35; }
+    .report-note:focus { border-color: var(--accent); }
 
     /* ── Collapsible groups ── */
     details {
@@ -554,7 +546,7 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #888;
+      color: var(--text-dim);
       padding: 2px 0;
       display: flex;
       align-items: center;
@@ -565,19 +557,17 @@
       content: '▸';
       transition: transform 0.15s;
       font-size: 8px;
-      color: #ff6b35;
+      color: var(--accent);
     }
     details[open] > summary::before { transform: rotate(90deg); }
     details > summary:hover { color: #aaa; }
 
-    /* Custom tooltips: a single fixed-position element managed by JS so
-       it can be clamped to the popup viewport (a pseudo-element anchored
-       to the 13px ? icon couldn't size or escape the icon's column). */
+    /* ── Custom tooltip (single JS-positioned element) ── */
     .cr-tip {
       position: fixed;
       pointer-events: none;
       z-index: 9999;
-      background: #0f0f1e;
+      background: var(--panel-2);
       color: #d8d8d8;
       border: 1px solid rgba(255,107,53,0.35);
       border-radius: 4px;
@@ -597,11 +587,7 @@
     }
     .cr-tip.show { opacity: 1; }
 
-    /* Help icon: a small "?" the user can hover for a tooltip without
-       interfering with the slider it sits next to.  Carries data-tip
-       itself, so the [data-tip]:hover::after rule shows the tip above
-       the icon (small enough that the tooltip won't be far from the
-       label it describes). */
+    /* ── Help "?" icon ── */
     .help {
       display: inline-flex;
       align-items: center;
@@ -620,9 +606,9 @@
       transition: color 0.15s, border-color 0.15s, background 0.15s;
     }
     .help:hover, .help:focus {
-      color: #ff6b35;
+      color: var(--accent);
       border-color: rgba(255,107,53,0.7);
-      background: rgba(255,107,53,0.12);
+      background: var(--accent-weak);
       outline: none;
     }
   </style>
@@ -639,13 +625,13 @@
     <span class="status-dot" id="statusDot"></span>
     <div style="display:flex;flex-direction:column;gap:1px;min-width:0;">
       <span class="status-text" id="statusText">Checking…</span>
-      <span id="statusDetail" style="font-size:10px;color:#666;letter-spacing:0.3px;display:none;"></span>
+      <span class="status-detail" id="statusDetail" style="display:none;"></span>
     </div>
   </div>
 
-  <!-- Enable / Auto-activate -->
+  <!-- Core switches: the daily controls, always visible -->
   <div class="section">
-    <div class="row">
+    <div class="row master">
       <div class="row-label">Enable extension</div>
       <label class="toggle">
         <input type="checkbox" id="toggleEnabled" />
@@ -674,8 +660,8 @@
     </div>
   </div>
 
-  <details open>
-    <summary>Position &amp; sync</summary>
+  <details id="sec-playback" open>
+    <summary>Playback</summary>
 
     <!-- Subtitle size -->
     <div class="row col">
@@ -705,10 +691,7 @@
       </div>
     </div>
 
-    <!-- Bottom margin: how far up from the video bottom default-anchored
-         subtitles sit, as a percentage of video height.  6% lands roughly
-         where Crunchyroll's own subs sit; raise to clear the playbar
-         further, lower to tuck subs closer to it. -->
+    <!-- Bottom margin -->
     <div class="row col">
       <div class="row-header">
         <div class="row-label">Bottom margin <span class="help" tabindex="0" data-tip="Minimum distance from the bottom of the video to default-anchored subtitles (% of video height). Raise to clear the playbar further; lower to tuck closer.">?</span></div>
@@ -716,292 +699,307 @@
       </div>
       <input type="range" id="subBottomFloor" min="0" max="30" step="1" value="6" />
     </div>
-  </details>
 
-  <details open>
-    <summary>Subtitle appearance</summary>
-
-  <!-- Live preview — always visible, reflects current style -->
-  <div class="preview-wrap">
-    <div class="preview-box" id="previewBox">
-      <div class="blob-stage">
-        <div class="blob b1"></div>
-        <div class="blob b2"></div>
-        <div class="blob b3"></div>
-        <div class="blob b4"></div>
-        <div class="blob b5"></div>
-      </div>
-      <div class="preview-sub">
-        <span id="previewSpan">Subtitle preview text</span>
-      </div>
-    </div>
-    <label class="preview-toggle">
-      <input type="checkbox" id="togglePreviewAnimate" />
-      <span>Animate background</span>
-    </label>
-  </div>
-
-  <!-- Quick presets: write a full style bundle in one chrome.storage.set
-       call.  "Custom" appears whenever the current settings don't match
-       any preset; selecting any other entry overwrites the whole bundle. -->
-  <div class="row sm" style="margin-top:6px;">
-    <span class="row-label" style="font-size:11px">Preset</span>
-    <select id="presetSelect" title="Apply a saved style preset (overwrites override settings)" style="flex:1;width:auto;margin-left:14px;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:5px 9px;font-size:11px;font-family:inherit;cursor:pointer;">
-      <option value="">Custom</option>
-      <option value="cr-default">CR Default</option>
-      <option value="white-outlined">White &amp; Outlined</option>
-      <option value="sticker">Sticker</option>
-      <option value="glass">Glass</option>
-    </select>
-  </div>
-
-  <div class="section">
-    <!-- Which subtitle type the controls below edit.  Dialogue and Signs
-         (typeset \pos cues) each keep their own independent style profile. -->
-    <div class="row sm" style="margin-bottom:2px;">
-      <span class="row-label" style="font-size:11px">Style for</span>
-      <div class="seg-ctrl" id="styleTargetSeg">
-        <button class="seg-btn active" data-val="dialogue" data-tip="Edit the look of regular dialogue subtitles.">Dialogue</button>
-        <button class="seg-btn"        data-val="signs"    data-tip="Edit the look of typeset signs (positioned on-screen text). Off by default = match the original.">Signs</button>
-      </div>
-    </div>
-    <!-- Sign text size (signs only): scales the typeset font, independent of the
-         override below — resize signs without changing their colour/look. -->
-    <div class="row col" id="signSizeRow" style="display:none;">
-      <div class="row-header">
-        <div class="row-label">Sign text size</div>
-        <span class="value-label" id="signScaleLabel">100%</span>
-      </div>
-      <input type="range" id="signScaleSlider" min="25" max="250" step="5" value="100" />
-    </div>
-    <!-- Master override toggle (per the selected type) -->
+    <!-- Study mode: pause when each line ends -->
     <div class="row">
-      <div class="row-label" id="toggleStyleOverrideLabel">Override subtitle style</div>
+      <div>
+        <div class="row-label">Pause at end of each line</div>
+        <div class="row-sub">Stops when a subtitle finishes — for study / shadowing (<kbd>Alt+R</kbd> replays)</div>
+      </div>
       <label class="toggle">
-        <input type="checkbox" id="toggleStyleOverride" />
+        <input type="checkbox" id="toggleAutoPause" />
         <span class="slider"></span>
       </label>
     </div>
 
-    <div class="style-controls disabled" id="styleControls">
-
-      <!-- Font -->
-      <div class="sub-label">Font</div>
-      <div class="row sm">
-        <select id="fontFamily">
-          <option value="">Default (from file)</option>
-          <option value="Arial, sans-serif"                style="font-family:Arial">Arial</option>
-          <option value="'Trebuchet MS', sans-serif"       style="font-family:'Trebuchet MS'">Trebuchet MS</option>
-          <option value="Impact, Charcoal, sans-serif"     style="font-family:Impact">Impact</option>
-          <option value="Verdana, sans-serif"              style="font-family:Verdana">Verdana</option>
-          <option value="Georgia, serif"                   style="font-family:Georgia">Georgia</option>
-          <option value="'Times New Roman', serif"         style="font-family:'Times New Roman'">Times New Roman</option>
-          <option value="'Courier New', monospace"         style="font-family:'Courier New'">Courier New</option>
-        </select>
+    <!-- Dual-sign spacing: lift the second language's signs above the first -->
+    <div class="row col">
+      <div class="row-header">
+        <div class="row-label">Dual-sign spacing <span class="help" tabindex="0" data-tip="With dual subtitles set to show Both languages' typeset signs, how far to lift the second language's signs above the first so they don't overlap (% of video height).">?</span></div>
+        <span class="value-label" id="secSignGapLabel">8%</span>
       </div>
+      <input type="range" id="secSignGap" min="0" max="40" step="1" value="8" />
+    </div>
+  </details>
 
-      <!-- Text -->
-      <div class="sub-label">Text</div>
-      <div class="co-row">
-        <input type="color" id="colorText" value="#ffffff" title="Text color" />
-        <div class="co-body">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Opacity</span>
-            <span class="value-label" id="textOpacityLabel">100%</span>
-          </div>
-          <input type="range" id="textOpacity" min="0" max="100" step="5" value="100" />
+  <details id="sec-appearance">
+    <summary>Subtitle appearance</summary>
+
+    <!-- Live preview — reflects current style -->
+    <div class="preview-wrap">
+      <div class="preview-box" id="previewBox">
+        <div class="blob-stage">
+          <div class="blob b1"></div>
+          <div class="blob b2"></div>
+          <div class="blob b3"></div>
+          <div class="blob b4"></div>
+          <div class="blob b5"></div>
+        </div>
+        <div class="preview-sub">
+          <span id="previewSpan">Subtitle preview text</span>
+        </div>
+      </div>
+      <label class="preview-toggle">
+        <input type="checkbox" id="togglePreviewAnimate" />
+        <span>Animate background</span>
+      </label>
+    </div>
+
+    <!-- Quick presets: write a full style bundle in one storage call. -->
+    <div class="row sm" style="margin-top:6px;">
+      <span class="row-label t-sm">Preset</span>
+      <select id="presetSelect" class="inline" title="Apply a saved style preset (overwrites override settings)">
+        <option value="">Custom</option>
+        <option value="cr-default">CR Default</option>
+        <option value="white-outlined">White &amp; Outlined</option>
+        <option value="sticker">Sticker</option>
+        <option value="glass">Glass</option>
+      </select>
+    </div>
+
+    <div class="section">
+      <!-- Which subtitle type the controls below edit. -->
+      <div class="row sm" style="margin-bottom:2px;">
+        <span class="row-label t-sm">Style for</span>
+        <div class="seg-ctrl" id="styleTargetSeg">
+          <button class="seg-btn active" data-val="dialogue" data-tip="Edit the look of regular dialogue subtitles.">Dialogue</button>
+          <button class="seg-btn"        data-val="signs"    data-tip="Edit the look of typeset signs (positioned on-screen text). Off by default = match the original.">Signs</button>
         </div>
       </div>
 
-      <!-- Force text colour (signs only): some signs animate their own colour via
-           ASS \t; this strips it so the chosen text colour wins (drops that anim). -->
-      <div class="row sm" id="forceColorRow" style="margin-top:4px;display:none;">
-        <span class="row-label" style="font-size:11px">Force text color
-          <span class="help" tabindex="0" data-tip="Some signs animate their own color (e.g. fading to teal). Turn this on to make your chosen text color win — this drops that color animation.">?</span></span>
+      <!-- Sign text size (signs only) -->
+      <div class="row col" id="signSizeRow" style="display:none;">
+        <div class="row-header">
+          <div class="row-label">Sign text size</div>
+          <span class="value-label" id="signScaleLabel">100%</span>
+        </div>
+        <input type="range" id="signScaleSlider" min="25" max="250" step="5" value="100" />
+      </div>
+
+      <!-- Master override toggle (per the selected type) -->
+      <div class="row">
+        <div class="row-label" id="toggleStyleOverrideLabel">Override subtitle style</div>
         <label class="toggle">
-          <input type="checkbox" id="toggleForceColor" />
+          <input type="checkbox" id="toggleStyleOverride" />
           <span class="slider"></span>
         </label>
       </div>
 
-      <!-- Outline + Shadow.  Disabled when Background Box is enabled (their
-           values aren't applied in that mode — the box replaces them). -->
-      <div id="outlineShadowControls">
-        <!-- Outline -->
-        <div class="sub-label">Outline</div>
-        <div class="co-row">
-          <input type="color" id="colorOutline" value="#000000" title="Outline color" />
-          <div class="co-body">
-            <div class="row-header">
-              <span class="row-label" style="font-size:11px">Width <span class="help" tabindex="0" data-tip="Thickness of the outline stroke around each glyph (px). Outline color via the swatch on the left.">?</span></span>
-              <span class="value-label" id="bordLabel">2</span>
-            </div>
-            <input type="range" id="bordSlider" min="0" max="8" step="0.5" value="2" />
-          </div>
-        </div>
+      <div class="style-controls disabled" id="styleControls">
 
-        <!-- Shadow -->
-        <div class="sub-label">Shadow</div>
-        <div class="row col sm">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Depth <span class="help" tabindex="0" data-tip="Drop-shadow offset (px). Positive = bottom-right (standard); negative = top-left.">?</span></span>
-            <span class="value-label" id="shadLabel">1</span>
-          </div>
-          <input type="range" id="shadSlider" min="-8" max="8" step="0.5" value="1" />
-        </div>
+        <!-- Font -->
+        <div class="sub-label">Font</div>
         <div class="row sm">
-          <span class="row-label" style="font-size:11px">Style</span>
-          <div class="seg-ctrl" id="shadStyleSeg">
-            <button class="seg-btn active" data-val="hard" data-tip="Tight blur — the shadow reads as a sharply-offset duplicate silhouette.">Hard</button>
-            <button class="seg-btn"        data-val="soft" data-tip="Wide Gaussian blur — diffused photographic drop shadow.">Soft / glow</button>
-          </div>
+          <select id="fontFamily">
+            <option value="">Default (from file)</option>
+            <option value="Arial, sans-serif"                style="font-family:Arial">Arial</option>
+            <option value="'Trebuchet MS', sans-serif"       style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+            <option value="Impact, Charcoal, sans-serif"     style="font-family:Impact">Impact</option>
+            <option value="Verdana, sans-serif"              style="font-family:Verdana">Verdana</option>
+            <option value="Georgia, serif"                   style="font-family:Georgia">Georgia</option>
+            <option value="'Times New Roman', serif"         style="font-family:'Times New Roman'">Times New Roman</option>
+            <option value="'Courier New', monospace"         style="font-family:'Courier New'">Courier New</option>
+          </select>
         </div>
-        <div class="row col sm">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Opacity</span>
-            <span class="value-label" id="shadOpacityLabel">80%</span>
-          </div>
-          <input type="range" id="shadOpacity" min="0" max="100" step="5" value="80" />
-        </div>
-      </div>
 
-      <!-- Background box -->
-      <div class="sub-label">Background box</div>
-      <div class="row sm">
-        <span class="row-label" style="font-size:11px">Enable</span>
-        <label class="toggle">
-          <input type="checkbox" id="toggleBgBox" />
-          <span class="slider"></span>
-        </label>
-      </div>
-      <div class="bg-controls disabled" id="bgControls">
+        <!-- Text -->
+        <div class="sub-label">Text</div>
         <div class="co-row">
-          <input type="color" id="bgColor" value="#000000" title="Background color" />
+          <input type="color" id="colorText" value="#ffffff" title="Text color" />
           <div class="co-body">
             <div class="row-header">
-              <span class="row-label" style="font-size:11px">Opacity</span>
-              <span class="value-label" id="bgOpacityLabel">70%</span>
+              <span class="row-label t-sm">Opacity</span>
+              <span class="value-label" id="textOpacityLabel">100%</span>
             </div>
-            <input type="range" id="bgOpacity" min="0" max="100" step="5" value="70" />
+            <input type="range" id="textOpacity" min="0" max="100" step="5" value="100" />
           </div>
-        </div>
-        <div class="row col sm">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Corner radius</span>
-            <span class="value-label" id="bgRadiusLabel">4px</span>
-          </div>
-          <input type="range" id="bgRadius" min="0" max="32" step="1" value="4" />
-        </div>
-        <div class="row col sm">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Padding X (left / right)</span>
-            <span class="value-label" id="bgPaddingXLabel">10px</span>
-          </div>
-          <input type="range" id="bgPaddingX" min="0" max="40" step="1" value="10" />
-        </div>
-        <div class="row col sm">
-          <div class="row-header">
-            <span class="row-label" style="font-size:11px">Padding Y (top / bottom) <span class="help" tabindex="0" data-tip="Vertical padding inside the box (px). Negative values tighten the line-height for an even more compact box.">?</span></span>
-            <span class="value-label" id="bgPaddingYLabel">2px</span>
-          </div>
-          <input type="range" id="bgPaddingY" min="-6" max="16" step="1" value="2" />
         </div>
 
-        <!-- Glass effect: backdrop blur + saturation/hue shift.  Tints with
-             the bg color above; the bg opacity slider controls how much the
-             blurred video shows through. -->
-        <div class="row sm" style="margin-top:6px;">
-          <span class="row-label" style="font-size:11px">Glass effect</span>
+        <!-- Force text colour (signs only) -->
+        <div class="row sm" id="forceColorRow" style="margin-top:4px;display:none;">
+          <span class="row-label t-sm">Force text color
+            <span class="help" tabindex="0" data-tip="Some signs animate their own color (e.g. fading to teal). Turn this on to make your chosen text color win — this drops that color animation.">?</span></span>
           <label class="toggle">
-            <input type="checkbox" id="toggleBgGlass" />
+            <input type="checkbox" id="toggleForceColor" />
             <span class="slider"></span>
           </label>
         </div>
-        <div class="bg-controls disabled" id="glassControls">
+
+        <!-- Outline + Shadow (disabled when Background Box is on) -->
+        <div id="outlineShadowControls">
+          <!-- Outline -->
+          <div class="sub-label">Outline</div>
+          <div class="co-row">
+            <input type="color" id="colorOutline" value="#000000" title="Outline color" />
+            <div class="co-body">
+              <div class="row-header">
+                <span class="row-label t-sm">Width <span class="help" tabindex="0" data-tip="Thickness of the outline stroke around each glyph (px). Outline color via the swatch on the left.">?</span></span>
+                <span class="value-label" id="bordLabel">2</span>
+              </div>
+              <input type="range" id="bordSlider" min="0" max="8" step="0.5" value="2" />
+            </div>
+          </div>
+
+          <!-- Shadow -->
+          <div class="sub-label">Shadow</div>
           <div class="row col sm">
             <div class="row-header">
-              <span class="row-label" style="font-size:11px">Blur <span class="help" tabindex="0" data-tip="How much the video behind the box gets blurred (px). Higher = frostier glass.">?</span></span>
-              <span class="value-label" id="bgGlassBlurLabel">8px</span>
+              <span class="row-label t-sm">Depth <span class="help" tabindex="0" data-tip="Drop-shadow offset (px). Positive = bottom-right (standard); negative = top-left.">?</span></span>
+              <span class="value-label" id="shadLabel">1</span>
             </div>
-            <input type="range" id="bgGlassBlur" min="0" max="30" step="1" value="8" />
+            <input type="range" id="shadSlider" min="-8" max="8" step="0.5" value="1" />
+          </div>
+          <div class="row sm">
+            <span class="row-label t-sm">Style</span>
+            <div class="seg-ctrl" id="shadStyleSeg">
+              <button class="seg-btn active" data-val="hard" data-tip="Tight blur — the shadow reads as a sharply-offset duplicate silhouette.">Hard</button>
+              <button class="seg-btn"        data-val="soft" data-tip="Wide Gaussian blur — diffused photographic drop shadow.">Soft / glow</button>
+            </div>
           </div>
           <div class="row col sm">
             <div class="row-header">
-              <span class="row-label" style="font-size:11px">Saturation <span class="help" tabindex="0" data-tip="Saturation of the blurred backdrop (100% = unchanged). Above 100 makes bleed-through colors pop.">?</span></span>
-              <span class="value-label" id="bgGlassSatLabel">160%</span>
+              <span class="row-label t-sm">Opacity</span>
+              <span class="value-label" id="shadOpacityLabel">80%</span>
             </div>
-            <input type="range" id="bgGlassSat" min="0" max="300" step="10" value="160" />
-          </div>
-          <div class="row col sm">
-            <div class="row-header">
-              <span class="row-label" style="font-size:11px">Hue rotate <span class="help" tabindex="0" data-tip="Shift the hue of the blurred backdrop (degrees on the color wheel).">?</span></span>
-              <span class="value-label" id="bgGlassHueLabel">0°</span>
-            </div>
-            <input type="range" id="bgGlassHue" min="0" max="360" step="5" value="0" />
+            <input type="range" id="shadOpacity" min="0" max="100" step="5" value="80" />
           </div>
         </div>
-      </div>
 
-    </div><!-- /styleControls -->
-  </div>
+        <!-- Background box -->
+        <div class="sub-label">Background box</div>
+        <div class="row sm">
+          <span class="row-label t-sm">Enable</span>
+          <label class="toggle">
+            <input type="checkbox" id="toggleBgBox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="bg-controls disabled" id="bgControls">
+          <div class="co-row">
+            <input type="color" id="bgColor" value="#000000" title="Background color" />
+            <div class="co-body">
+              <div class="row-header">
+                <span class="row-label t-sm">Opacity</span>
+                <span class="value-label" id="bgOpacityLabel">70%</span>
+              </div>
+              <input type="range" id="bgOpacity" min="0" max="100" step="5" value="70" />
+            </div>
+          </div>
+          <div class="row col sm">
+            <div class="row-header">
+              <span class="row-label t-sm">Corner radius</span>
+              <span class="value-label" id="bgRadiusLabel">4px</span>
+            </div>
+            <input type="range" id="bgRadius" min="0" max="32" step="1" value="4" />
+          </div>
+          <div class="row col sm">
+            <div class="row-header">
+              <span class="row-label t-sm">Padding X (left / right)</span>
+              <span class="value-label" id="bgPaddingXLabel">10px</span>
+            </div>
+            <input type="range" id="bgPaddingX" min="0" max="40" step="1" value="10" />
+          </div>
+          <div class="row col sm">
+            <div class="row-header">
+              <span class="row-label t-sm">Padding Y (top / bottom) <span class="help" tabindex="0" data-tip="Vertical padding inside the box (px). Negative values tighten the line-height for an even more compact box.">?</span></span>
+              <span class="value-label" id="bgPaddingYLabel">2px</span>
+            </div>
+            <input type="range" id="bgPaddingY" min="-6" max="16" step="1" value="2" />
+          </div>
+
+          <!-- Glass effect (dialogue only) -->
+          <div class="row sm" style="margin-top:6px;">
+            <span class="row-label t-sm">Glass effect</span>
+            <label class="toggle">
+              <input type="checkbox" id="toggleBgGlass" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="bg-controls disabled" id="glassControls">
+            <div class="row col sm">
+              <div class="row-header">
+                <span class="row-label t-sm">Blur <span class="help" tabindex="0" data-tip="How much the video behind the box gets blurred (px). Higher = frostier glass.">?</span></span>
+                <span class="value-label" id="bgGlassBlurLabel">8px</span>
+              </div>
+              <input type="range" id="bgGlassBlur" min="0" max="30" step="1" value="8" />
+            </div>
+            <div class="row col sm">
+              <div class="row-header">
+                <span class="row-label t-sm">Saturation <span class="help" tabindex="0" data-tip="Saturation of the blurred backdrop (100% = unchanged). Above 100 makes bleed-through colors pop.">?</span></span>
+                <span class="value-label" id="bgGlassSatLabel">160%</span>
+              </div>
+              <input type="range" id="bgGlassSat" min="0" max="300" step="10" value="160" />
+            </div>
+            <div class="row col sm">
+              <div class="row-header">
+                <span class="row-label t-sm">Hue rotate <span class="help" tabindex="0" data-tip="Shift the hue of the blurred backdrop (degrees on the color wheel).">?</span></span>
+                <span class="value-label" id="bgGlassHueLabel">0°</span>
+              </div>
+              <input type="range" id="bgGlassHue" min="0" max="360" step="5" value="0" />
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /styleControls -->
+    </div>
   </details>
 
-  <details>
+  <details id="sec-mt">
     <summary>Machine translation</summary>
-    <div class="row col sm" style="background:transparent;padding:4px 2px;">
-      <div class="row-sub" style="color:#888;line-height:1.5;">
+    <div class="row col sm bare">
+      <div class="muted">
         Fill in a language Crunchyroll doesn't carry — e.g. Japanese — by machine-translating
-        an existing track. Bring your own <a href="https://www.deepl.com/pro-api" target="_blank" style="color:#9ecbff;">DeepL</a> API key
+        an existing track. Bring your own <a class="link plain" href="https://www.deepl.com/pro-api" target="_blank">DeepL</a> API key
         (the free tier covers ~500k characters/month).
         It's stored only on this device and sent only to DeepL.
-        <b style="color:#b08cff;">Machine output is an approximation, not authored subtitles.</b>
+        <b style="color:var(--mt);">Machine output is an approximation, not authored subtitles.</b>
       </div>
 
       <div class="row sm">
-        <span class="row-label" style="font-size:11px">Enable machine translation</span>
+        <span class="row-label t-sm">Enable machine translation</span>
         <label class="toggle"><input type="checkbox" id="toggleMtEnabled" /><span class="slider"></span></label>
       </div>
 
-      <div class="row-sub" style="color:#777;line-height:1.5;margin-top:2px;">
+      <div class="muted" style="margin-top:2px;">
         Target language &amp; source track are chosen on the player — ▾ source picker →
-        <b style="color:#9ecbff;">⚙ Translation settings</b> — and they're saved per your last choice.
+        <b style="color:var(--link);">⚙ Translation settings</b> — and they're saved per your last choice.
       </div>
 
       <input id="mtApiKey" class="report-note" type="password" autocomplete="off" placeholder="Paste your API key" style="margin-top:6px;margin-bottom:4px;" />
       <button id="mtSave" class="report-btn" type="button">Save &amp; enable</button>
-      <div id="mtStatus" class="row-sub" style="text-align:center;margin-top:5px;min-height:13px;"></div>
-      <div class="row-sub" style="text-align:center;margin-top:2px;">
-        <a id="mtClear" href="#" style="color:#777;text-decoration:underline;">Remove saved key</a>
+      <div id="mtStatus" class="row-sub center" style="margin-top:5px;min-height:13px;"></div>
+      <div class="row-sub center" style="margin-top:2px;">
+        <a id="mtClear" href="#" class="link" style="color:#777;">Remove saved key</a>
       </div>
     </div>
   </details>
 
-  <details>
+  <details id="sec-help">
     <summary>Help &amp; feedback</summary>
-    <div class="row col sm" style="background:transparent;padding:4px 2px;">
-      <div class="row-sub" style="color:#888;line-height:1.5;">
+    <div class="row col sm bare">
+      <div class="muted">
         Something not working? Send a report so we can see what happened. With
         diagnostics on it attaches a short log (version, page, recent activity —
         private tokens stripped); turn it off to send just your note.
       </div>
       <textarea id="reportNote" class="report-note" rows="2" placeholder="What went wrong? (optional)"></textarea>
       <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;margin-bottom:6px;">
-        <span class="row-sub" style="color:#aaa;">Include diagnostics <span style="color:#666;">— page, activity, settings</span></span>
+        <span class="row-sub" style="color:#aaa;">Include diagnostics <span style="color:var(--text-mute);">— page, activity, settings</span></span>
         <span class="toggle"><input type="checkbox" id="toggleIncludeDiag" /><span class="slider"></span></span>
       </label>
       <button id="reportSend" class="report-btn" type="button">Send a report</button>
-      <div class="row-sub" style="text-align:center;margin-top:4px;">
-        <a id="reportGithub" href="#" style="color:#777;text-decoration:underline;">…or open a GitHub issue instead</a>
+      <div class="row-sub center" style="margin-top:4px;">
+        <a id="reportGithub" href="#" class="link" style="color:#777;">…or open a GitHub issue instead</a>
       </div>
-      <div class="row-sub" style="text-align:center;margin-top:10px;">
-        <a href="https://buymeacoffee.com/ani_" target="_blank" rel="noopener noreferrer" style="color:#d9a93e;text-decoration:none;">☕ Enjoying it? Buy me a coffee</a>
+      <div class="row-sub center" style="margin-top:10px;">
+        <a class="link plain" href="https://buymeacoffee.com/ani_" target="_blank" rel="noopener noreferrer" style="color:var(--coffee);">☕ Enjoying it? Buy me a coffee</a>
       </div>
     </div>
   </details>
 
   <footer class="app-footer">
     <span>Reload the episode tab after toggling the extension.</span>
-    <span class="kbd-hint">Toggle subtitles <kbd>Alt+J</kbd></span>
+    <span class="kbd-hint">Toggle <kbd>Alt+J</kbd> · Replay line <kbd>Alt+R</kbd> · Copy line <kbd>Alt+C</kbd></span>
   </footer>
 
   <script src="lib/settings-schema.js"></script>

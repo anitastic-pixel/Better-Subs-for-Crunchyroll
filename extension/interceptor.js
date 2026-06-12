@@ -53,7 +53,7 @@
   // Diagnostic: surface any missing module so a silent bail is visible.
   const NS = self.CRSubFix;
   if (!NS) { console.warn('[CR Sub Fix] interceptor.js bail: self.CRSubFix is undefined'); return; }
-  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi'].filter(k => !NS[k]);
+  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme'].filter(k => !NS[k]);
   if (_missing.length) {
     console.warn('[CR Sub Fix] interceptor.js bail: missing modules:', _missing, 'present:', Object.keys(NS));
     return;
@@ -71,12 +71,24 @@
   const WRONG_TITLE = NS.wrongTitle;
   const REMASTER  = NS.remaster;
   const PLAYBACK  = NS.playbackApi;
+  const SIGN_TRACK = NS.signTrack;
+  const SUB_SYNC   = NS.subSync;
+  const CUSTOM     = NS.customSource;
+  const THEME      = NS.uiTheme.tokens;
+  const panelStyle = NS.uiTheme.panel;
 
   // Re-exports so existing call sites keep working unchanged.
   const { parseSubtitles, normalizeSubText, applyAlpha } = PARSER;
   const { escapeHtml } = UI;
   const { hexToRgba } = CUE_STYLE;
   const { buildAnchorMap, remasterCues, computeMedianDelta, MIN_ANCHORS } = REMASTER;
+  // Custom source: identity + record construction (lib/custom-source.js), the
+  // timing model (lib/sub-sync.js), and the typeset-signs projection
+  // (lib/sign-track.js).  This file keeps the DOM wiring, fetching, and the
+  // apply path that thread these together.
+  const { buildSignsAss, extractSignTexts, rebuildSignsAss, mergeSigns } = SIGN_TRACK;
+  const applyCustomSync = SUB_SYNC.applySync;
+  const { computeLinearSync } = SUB_SYNC;
 
   // Logging + diagnostics.  The sessionStorage *trace* records ALWAYS (silently)
   // — it backs the popup's "Report an issue" diagnostics and the crSubFixDebug
@@ -429,6 +441,15 @@
     localeLabels:    LOCALE_LABELS,
     onSelectLocale:  (locale) => selectSource(locale),
     onSelectCustom:  (id)     => selectSource(id),
+    // Dual subtitles: pick / clear the secondary track (persisted across episodes).
+    onSelectSecondary: (locale) => selectSecondary(locale),
+    getSecondary:      ()       => getSecondaryPref(),
+    // Which track draws typeset signs (primary / secondary / both).
+    onSetSignSource:   (mode)   => setSignSrcMode(mode),
+    getSignSource:     ()       => getSignSrcMode(),
+    // Whether the loaded secondary track actually has signs (else grey out the
+    // Secondary/Both sign options — CR ships some locales dialogue-only).
+    getSecondaryHasSigns: ()    => _secondaryHasSigns,
     onLoadFile:      ()       => promptLoadFile(),
     onRemoveCustom:  (id)     => removeCustomSource(id),
     onAdjustSync:    (id)     => openSyncPanel(id),
@@ -598,28 +619,11 @@
   // A custom source is a non-CR subtitle track attached to the Episode (see
   // lib/episode.js's registry).  It rides the SAME apply path as a CR locale —
   // handleButtonClick branches on isCustomId(activeSource) and feeds the
-  // record's cues straight into ep.setOriginalCues, skipping URL fetch.
-  const CUSTOM_LOCAL_ID = 'custom:local';
-  const isCustomId = (id) => typeof id === 'string' && id.startsWith('custom:');
-
-  // Apply a record's stored sync params to its raw cues, producing display cues.
-  // 'linear' (two-point manual sync) and 'anchors' (auto-sync via remaster) are
-  // baked here; the global subOffset slider still applies on top at render time.
-  function applyCustomSync(record) {
-    const src  = record?.srcCues ?? [];
-    const sync = record?.sync ?? { mode: 'none' };
-    if (sync.mode === 'linear' && isFinite(sync.scale) && isFinite(sync.offset)) {
-      return src.map(c => ({
-        ...c,
-        start: c.start * sync.scale + sync.offset,
-        end:   c.end   * sync.scale + sync.offset,
-      }));
-    }
-    if (sync.mode === 'anchors' && Array.isArray(sync.anchors) && sync.anchors.length >= 2) {
-      return remasterCues(src, sync.anchors);
-    }
-    return src.slice();
-  }
+  // record's cues (retimed by applyCustomSync = subSync.applySync) straight
+  // into ep.setOriginalCues, skipping URL fetch.  Identity, the record shape,
+  // and the timing model live in lib/custom-source.js + lib/sub-sync.js.
+  const CUSTOM_LOCAL_ID = CUSTOM.LOCAL_ID;
+  const isCustomId = CUSTOM.isCustomId;
 
   function currentCustomSource() {
     const ep = currentEp();
@@ -684,25 +688,14 @@
     let text;
     try { text = await file.text(); }
     catch (err) { showErrorToast('Could not read that subtitle file.'); return; }
-    const cues = parseSubtitles(text, file.name);
-    if (!cues.length) {
+    const record = CUSTOM.makeLocalSource(file.name, text);
+    if (!record) {
       log.warn(`Uploaded file [${file.name}] parsed to 0 cues.`);
       showErrorToast('No subtitles found in that file.');
       return;
     }
-    log.info(`Loaded local subtitle file [${file.name}] — ${cues.length} cues.`);
-    ep.addCustomSource({
-      id:      CUSTOM_LOCAL_ID,
-      kind:    'local',
-      label:   file.name.replace(/\.[^.]+$/, '').slice(0, 40) || 'Uploaded file',
-      lang:    null,
-      srcCues: cues,
-      // Render the upload's OWN typeset signs through libass — including any fonts
-      // the .ass embeds in its [Fonts] section (buildSignsAss keeps everything
-      // before [Events]).  null for sign-less files (SRT/VTT).
-      signRawAss: buildSignsAss(text),
-      sync:    { mode: 'none' },
-    });
+    log.info(`Loaded local subtitle file [${file.name}] — ${record.srcCues.length} cues.`);
+    ep.addCustomSource(record);
     sourceMenu.updateButtonVisibility();
     // force=true: re-uploading replaces the same 'custom:local' slot, so the id
     // may be unchanged while the cues changed — bypass selectSource's same-id
@@ -883,11 +876,11 @@
     const b = document.createElement('button');
     b.textContent = label;
     Object.assign(b.style, {
-      background: accent ? '#ff6b35' : 'transparent',
-      color:      accent ? '#fff' : '#e0e0e0',
-      border:     `1px solid ${accent ? '#ff6b35' : 'rgba(255,255,255,0.25)'}`,
-      borderRadius: '4px', padding: '4px 9px', fontSize: '12px',
-      fontFamily: 'sans-serif', cursor: 'pointer', flexShrink: '0',
+      background: accent ? THEME.accent : 'transparent',
+      color:      accent ? THEME.accentText : THEME.text,
+      border:     `1px solid ${accent ? THEME.accent : THEME.panelEdge}`,
+      borderRadius: '5px', padding: '4px 9px', fontSize: '12px',
+      fontFamily: THEME.font, cursor: 'pointer', flexShrink: '0',
     });
     return b;
   }
@@ -925,13 +918,8 @@
       reapply();
     }
     function recompute() {
-      if (markA != null && markB != null && Math.abs(lastRaw - firstRaw) >= 1) {
-        const scale  = (markB - markA) / (lastRaw - firstRaw);
-        const offset = markA - firstRaw * scale;
-        applyLinear(scale, offset);
-      } else if (markA != null) {
-        applyLinear(1, markA - firstRaw);  // offset-only until the end is marked
-      }
+      const sync = computeLinearSync(markA, markB, firstRaw, lastRaw);
+      if (sync) applyLinear(sync.scale, sync.offset);
       refresh();
     }
     function nudge(delta) {
@@ -952,14 +940,11 @@
 
     const panel = document.createElement('div');
     panel.id = SYNC_PANEL_ID;
-    Object.assign(panel.style, {
-      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
-      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '12px 14px',
-      width: '320px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
-    });
+    Object.assign(panel.style, panelStyle({
+      position: 'absolute', zIndex: '2147483646', padding: '12px 14px', width: '320px',
+    }));
     panel.innerHTML =
-      `<div style="font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:2px;">Adjust sync</div>` +
+      `<div style="font-size:13px;font-weight:700;color:${THEME.accent};margin-bottom:2px;">Adjust sync</div>` +
       `<div style="font-size:11px;color:#9aa;line-height:1.4;margin-bottom:10px;">` +
         `Seek the video to where each line should appear, then mark it. Two points correct both offset and speed.</div>` +
       `<div style="font-size:11px;color:#888;margin:4px 0 2px;">First line<span style="color:#bbb;"> · "${escapeHtml(preview(src[0].text))}"</span></div>` +
@@ -1091,10 +1076,22 @@
       }
     }
     if (!url) return null;
-    const cues = await fetchAndParseSubs(url);
-    // Surface the raw .ass too (already cached by fetchAndParseSubs) so callers
-    // can reuse its typeset signs — used by MT sign translation.
-    return cues.length ? { cues, rawText: ep.getCachedRawText(url) || null, url } : null;
+    // Fetch the raw .ass directly and keep its text in-memory.  We can't read it
+    // back from getCachedRawText: the sessionStorage raw-text cache is best-effort
+    // and gets evicted when full (CR fills it with 100+ files), so the cached copy
+    // is often null — which left the secondary SIGN layer empty (sec=0) even
+    // though the cues parsed fine.  Used by the secondary sign layer + MT signs.
+    let text = ep.getCachedRawText(url);
+    if (!text) {
+      try {
+        const resp = await originalFetch(url);
+        if (!resp.ok) return null;
+        text = await resp.text();
+        ep.setCachedRawText(url, text);  // best-effort; we keep `text` regardless
+      } catch (_) { return null; }
+    }
+    const cues = parseSubtitles(text, url);
+    return cues.length ? { cues, rawText: text, url } : null;
   }
 
   // Partial-progress cache: every batch's translations are persisted keyed by
@@ -1142,7 +1139,7 @@
     const sLabel = LOCALE_LABELS[source] ?? source;
 
     const hud = UI.makeProgressHud(toastHost());
-    hud.html(`<span style="color:#ff6b35;font-weight:700;">⟳ Translating ${escapeHtml(sLabel)} → ${escapeHtml(tLabel)}</span>` +
+    hud.html(`<span style="color:${THEME.accent};font-weight:700;">⟳ Translating ${escapeHtml(sLabel)} → ${escapeHtml(tLabel)}</span>` +
              `<div style="color:rgba(255,255,255,0.5);font-size:10px;margin-top:3px;">loading source subtitles…</div>`);
 
     const fetched = await fetchCuesForLocale(ep, source);
@@ -1242,15 +1239,12 @@
     // Put the sign translations (the tail of `out`) back into the signs .ass; a
     // missing one keeps its source-language text.  null = base has no signs.
     const signRawAss = signParse ? rebuildSignsAss(signParse, out.slice(nDlg)) : (signsBase || null);
-    ep.addCustomSource({
-      id, kind: 'mt',
+    ep.addCustomSource(CUSTOM.makeMtSource({
+      id, target, source,
       label: `${tLabel} (${pLabel})`,
-      lang:  target,
-      mtSource: source,
       srcCues: mtCues,
       signRawAss,   // base track's typeset signs, translated to the target
-      sync:  { mode: 'none' },
-    });
+    }));
     STORAGE.lsDel(partKey);
     try { sessionStorage.removeItem('crSubFix_mt_reloaded'); } catch (_) {}  // re-arm auto-reload for next time
     sourceMenu.updateButtonVisibility();
@@ -1314,8 +1308,11 @@
   }
   function mtSelect() {
     const s = document.createElement('select');
-    s.style.cssText = 'width:100%;background:#0f0f1e;color:#e0e0e0;border:1px solid rgba(255,255,255,0.25);' +
-      'border-radius:4px;padding:5px 8px;font-size:12px;font-family:sans-serif;cursor:pointer;outline:none;';
+    // color-scheme:dark makes the browser draw the native option-list popup dark
+    // with light text — otherwise the popup is white and our light option text
+    // is invisible on it.
+    s.style.cssText = `width:100%;background:rgba(255,255,255,0.06);color:${THEME.text};border:1px solid ${THEME.panelEdge};` +
+      `border-radius:5px;padding:5px 8px;font-size:12px;font-family:${THEME.font};cursor:pointer;outline:none;color-scheme:dark;`;
     return s;
   }
   function mtSetOptions(sel, opts, selected) {
@@ -1348,14 +1345,11 @@
 
     const panel = document.createElement('div');
     panel.id = TRANSLATE_PANEL_ID;
-    Object.assign(panel.style, {
-      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
-      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '12px 14px',
-      width: '300px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
-    });
+    Object.assign(panel.style, panelStyle({
+      position: 'absolute', zIndex: '2147483646', padding: '12px 14px', width: '300px',
+    }));
     panel.innerHTML =
-      `<div style="font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:10px;">🌐 Translation settings</div>` +
+      `<div style="font-size:13px;font-weight:700;color:${THEME.accent};margin-bottom:10px;">🌐 Translation settings</div>` +
       `<div style="font-size:11px;color:#888;margin-bottom:3px;">Translate into</div>` +
       `<div data-row="to" style="margin-bottom:9px;"></div>` +
       `<div style="font-size:11px;color:#888;margin-bottom:3px;">From</div>` +
@@ -1422,11 +1416,11 @@
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;color:#bbb;margin-bottom:2px;';
     const lab = document.createElement('span'); lab.textContent = label;
-    const val = document.createElement('span'); val.textContent = cur + suffix; val.style.color = '#ff6b35';
+    const val = document.createElement('span'); val.textContent = cur + suffix; val.style.color = THEME.accent;
     head.append(lab, val);
     const range = document.createElement('input');
     range.type = 'range'; range.min = min; range.max = max; range.step = step; range.value = cur;
-    range.style.cssText = 'width:100%;cursor:pointer;accent-color:#ff6b35;';
+    range.style.cssText = `width:100%;cursor:pointer;accent-color:${THEME.accent};`;
     range.addEventListener('input', () => {
       const v = parseFloat(range.value);
       val.textContent = v + suffix;
@@ -1441,14 +1435,11 @@
     closeTypesetTunePanel();
     const panel = document.createElement('div');
     panel.id = TUNE_PANEL_ID;
-    Object.assign(panel.style, {
-      position: 'absolute', zIndex: '2147483646', background: '#1a1a2e',
-      border: '1px solid rgba(255,107,53,0.4)', borderRadius: '8px',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.6)', padding: '10px 13px',
-      width: '270px', fontFamily: 'sans-serif', color: '#e0e0e0', userSelect: 'none',
-    });
+    Object.assign(panel.style, panelStyle({
+      position: 'absolute', zIndex: '2147483646', padding: '10px 13px', width: '270px',
+    }));
     const title = document.createElement('div');
-    title.style.cssText = 'font-size:13px;font-weight:700;color:#ff6b35;margin-bottom:9px;cursor:move;';
+    title.style.cssText = `font-size:13px;font-weight:700;color:${THEME.accent};margin-bottom:9px;cursor:move;`;
     title.textContent = '🎚 Typeset tuning (signs) ⠿';
     panel.appendChild(title);
     panel.appendChild(tuneSlider('Perspective',  'crSubFix_persp',     300, 2200, 25,   1018, 'px'));
@@ -1583,7 +1574,7 @@
       : '';
     const bridgeStr  = stats.bridge ? ` via ${escapeHtml(String(stats.bridge))}` : '';
     hud.html(
-      `<div style="color:#ff6b35;font-weight:700;">✓  Auto-sync validated${bridgeStr}</div>` +
+      `<div style="color:${THEME.accent};font-weight:700;">✓  Auto-sync validated${bridgeStr}</div>` +
       `<div style="color:rgba(255,255,255,0.45);font-size:10px;margin-top:2px;">` +
         `${deltaStr}${stats.count} anchors · ${stats.quality}% coverage${cached}` +
       `</div>`,
@@ -1754,6 +1745,8 @@
   const getSubScale            = () => SETTINGS.read(html, 'subScale');
   const getSyncOffset          = () => SETTINGS.read(html, 'subOffset');
   const getSubBottomFloor      = () => SETTINGS.read(html, 'subBottomFloor');
+  const isAutoPauseLine        = () => SETTINGS.read(html, 'autoPauseLine');
+  const getSecondarySignGap    = () => SETTINGS.read(html, 'secondarySignGap');
   // (The style-override values are read directly via SETTINGS.read in
   // captureStyleCtx(), so no per-key getter accessors are kept here.)
   // Target + source are chosen on the player (⚙ Translation settings) and
@@ -2063,12 +2056,33 @@
     }
   });
 
+  // ── Study hotkeys (Alt+R replay, Alt+C copy) ──────────────────────────────
+  // Alt-modified so they never clash with Crunchyroll's single-key player
+  // shortcuts or the bare-'C' toggle above.  Only on a watch page with cues,
+  // never while typing into a field.
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const k = e.key.toLowerCase();
+    if (k !== 'r' && k !== 'c') return;
+    const tgt = e.target;
+    if (tgt && (tgt.isContentEditable ||
+        tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT')) return;
+    if (!isEnabled() || !currentEp() || !videoEl) return;
+    e.preventDefault();
+    if (k === 'r') replayLine();
+    else          copyActiveLine();
+  });
+
   // ── Live re-render on settings changes ────────────────────────────────────
   // content.js writes to the data-cr-* attributes; this observer invalidates
   // the renderer's cue cache so the next timeupdate re-renders at the new
   // style/size.
   new MutationObserver(() => {
     renderer.invalidate();
+    // Re-push the libass sign layer too, so sign-affecting settings (e.g. the
+    // dual-sign gap in 'both' mode) take effect live; content.js dedupes an
+    // unchanged .ass, so this is a no-op when nothing sign-relevant changed.
+    pushSignLayer();
     if (overlayActive) onTimeUpdate();
     // If autoActivate just flipped on (or was always on but the attribute
     // hadn't been written yet when JP data first landed), give it another
@@ -2220,6 +2234,29 @@
   }
 
   // ── Pre-fetch JP data ──────────────────────────────────────────────────────
+  // Build the Source-picker version list from the JP subtitle data we already
+  // hold (the stored ja-JP session row), so the picker is populated even on a
+  // DUB episode — whose live playback response never runs the full setVersions
+  // block (it returns early without a ja-JP version), leaving its catalog empty
+  // and the dropdown showing only the action rows.  Guarded: it never clobbers
+  // a richer list already built from a live JP response (which carries the
+  // audio-dub guids), so the live path always wins when it runs.
+  function ensureVersionList(ep) {
+    if (!ep || ep.disposed) return;
+    if (ep.catalog.versions().length > 0) return;
+    const locales = ep.catalog.allSubtitleLocales();
+    if (!locales.size) return;
+    const versions = [{ locale: 'ja-JP', guid: ep.jpGuid ?? null }];
+    for (const loc of locales) {
+      if (loc !== 'ja-JP') versions.push({ locale: loc, guid: null });
+    }
+    versions.sort((a, b) =>
+      a.locale === 'ja-JP' ? -1 : b.locale === 'ja-JP' ? 1 : a.locale.localeCompare(b.locale));
+    ep.catalog.setVersions(versions);
+    sourceMenu.updateButtonVisibility();
+    log.info(`Source picker (carried from JP data): ${versions.map(v => v.locale).join(', ')}`);
+  }
+
   async function maybePrefetch() {
     const ep = currentEp();
     if (!ep) return;
@@ -2235,6 +2272,7 @@
       const jpData = await fetchAndCacheJpData(jpGuid, auth);
       if (ep.disposed) return;
       if (jpData?.jpRow) storeSessionSubs('ja-JP', jpData.jpRow);
+      ensureVersionList(ep);  // populate the picker for this (possibly dub) episode
       if (jpData?.captionUrl || jpData?.subtitleUrl) {
         ep.setJpUrls(jpData.captionUrl ?? null, jpData.subtitleUrl ?? null);
         ep.setJpGuid(jpGuid);
@@ -2387,56 +2425,70 @@
   // own server-side libass exactly.  We post a "signs-only" .ass (the active CR
   // source's raw file, filtered to \pos/\move Dialogue lines) across to content.js;
   // dialogue stays on the CSS renderer.  `_signRawAss` = the active source's raw
-  // .ass (null for custom/MT sources, which have no typeset).
+  // .ass — a CR locale's fetched file, an upload's own typeset signs, or an MT
+  // record's translated signs (sign-less SRT/VTT uploads leave it null).
   let _signRawAss = null;
+  // The secondary (dual-subtitle) track's raw .ass, so its typeset signs can be
+  // shown instead of / alongside the primary's via the "Signs" selector.
+  let _secondaryRawAss = null;
+  // Whether that track actually carries \pos typeset signs — CR ships some
+  // locales dialogue-only, in which case "Secondary"/"Both" have nothing to show.
+  let _secondaryHasSigns = false;
   const isLibassSigns = () => { try { return localStorage.getItem('crSubFix_libass') !== '0'; } catch (_) { return true; } };
-  function buildSignsAss(raw) {
-    if (!raw || !/\[Events\]/i.test(raw)) return null;
-    const lines = raw.replace(/\r/g, '').split('\n');
-    const out = []; let inEvents = false, hasSign = false;
-    for (const l of lines) {
-      if (/^\[Events\]/i.test(l)) { inEvents = true; out.push(l); continue; }
-      if (!inEvents) { out.push(l); continue; }            // [Script Info]/[V4+ Styles]/[Fonts]
-      if (/^Format\s*:/i.test(l)) { out.push(l); continue; }
-      if (/^Dialogue\s*:/i.test(l)) { if (/\\pos|\\move/i.test(l)) { out.push(l); hasSign = true; } continue; }
-      out.push(l);                                          // comments etc.
-    }
-    return hasSign ? out.join('\n') : null;
+
+  // CJK detection (Hangul / Kana / CJK ideographs) — mirrors content.js.  libass
+  // only has our bundled fonts, so CJK signs (e.g. machine-translated Simplified
+  // Chinese) render as tofu boxes.  When the sign layer is CJK we keep libass
+  // empty and draw the \pos signs on the CSS overlay instead, which uses the
+  // viewer's system fonts (the same ones that already render CJK dialogue).
+  const hasCJK = (s) => /[ᄀ-ᇿ　-ヿ㄰-鿿가-힯豈-﫿]/.test(s || '');
+  let _signsViaCss = false;
+
+  // Which track draws the typeset signs: 'primary' (default), 'secondary', or
+  // 'both'.  Persisted cross-episode; only meaningful once a secondary track is
+  // set.  'both' merges the two sign layers and CAN overlap where translated
+  // signs share a \pos — an accepted tradeoff the user opts into.
+  const SIGN_SRC_KEY = 'crSubFix_signsrc';
+  const getSignSrcMode = () => { try { return localStorage.getItem(SIGN_SRC_KEY) || 'primary'; } catch (_) { return 'primary'; } };
+  function setSignSrcMode(mode) {
+    try { localStorage.setItem(SIGN_SRC_KEY, mode || 'primary'); } catch (_) {}
+    pushSignLayer();
+    renderer.invalidate();
+    if (overlayActive) onTimeUpdate();
   }
-  // MT sign translation: pull the translatable text out of each \pos sign line so
-  // it can ride the dialogue MT batch, then put the translations back.  Returns
-  // { lines, texts, slots } where slots[i] maps texts[i] to its source line; the
-  // tags before the text are preserved, mid-text override blocks are dropped
-  // (rare in typeset; their formatting is lost but the text is translated).
-  function extractSignTexts(signsAss) {
-    const lines = (signsAss || '').split('\n');
-    const texts = [], slots = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (!/^Dialogue\s*:/i.test(lines[i])) continue;
-      const m = lines[i].match(/^(Dialogue\s*:(?:[^,]*,){9})(.*)$/i);
-      if (!m) continue;
-      const lead = (m[2].match(/^(?:\{[^}]*\})*/) || [''])[0];   // leading override block(s)
-      const body = m[2].slice(lead.length)
-        .replace(/\{[^}]*\}/g, '')                               // drop mid-text tags
-        .replace(/\\[Nn]/g, '\n').replace(/\\h/g, ' ');          // decode line breaks
-      if (!/[^\s]/.test(body)) continue;                         // nothing to translate
-      slots.push({ lineIdx: i, head: m[1] + lead });
-      texts.push(body.trim());
-    }
-    return { lines, texts, slots };
+
+  // buildSignsAss / extractSignTexts / rebuildSignsAss — the typeset-signs
+  // projection of an .ass — live in lib/sign-track.js and are destructured at
+  // the top of this file.
+
+  // The signs .ass to push, per the selector.  'secondary'/'both' fall back to
+  // the primary's signs when no secondary is loaded, so signs never vanish.
+  // mergeSigns (dual signs) lives in lib/sign-track.js.
+  function computeSignLayer() {
+    const mode = getSignSrcMode();
+    const pri = _signRawAss ? buildSignsAss(_signRawAss) : null;
+    const sec = _secondaryRawAss ? buildSignsAss(_secondaryRawAss) : null;
+    if (mode === 'secondary') return sec || pri;
+    if (mode === 'both')      return mergeSigns(pri, sec, getSecondarySignGap());
+    return pri;
   }
-  function rebuildSignsAss(parsed, translations) {
-    const { lines, slots } = parsed;
-    for (let i = 0; i < slots.length; i++) {
-      if (translations[i] == null) continue;
-      lines[slots[i].lineIdx] = slots[i].head + String(translations[i]).replace(/\n/g, '\\N');
-    }
-    return lines.join('\n');
-  }
+
   function pushSignLayer() {
     let ass = null;
-    try { if (isLibassSigns() && overlayActive && _signRawAss) ass = buildSignsAss(_signRawAss); } catch (_) {}
-    try { log.info(`Sign layer → ${ass ? ass.length + ' chars' : 'cleared'} (libass=${isLibassSigns()} active=${overlayActive} raw=${_signRawAss ? _signRawAss.length : 0})`); } catch (_) {}
+    _signsViaCss = false;
+    try {
+      if (isLibassSigns() && overlayActive) {
+        const layer = computeSignLayer();
+        // CJK sign layer → render on the CSS overlay (system fonts) instead of
+        // libass (bundled fonts only).  Keep libass empty; onTimeUpdate draws
+        // the \pos sign cues itself.
+        if (layer && hasCJK(layer)) { _signsViaCss = true; ass = null; }
+        else ass = layer;
+      }
+    } catch (_) {}
+    // secHasSigns=false means the secondary locale's file is dialogue-only (no
+    // \pos typeset) — common when CR typesets signs in the English track only.
+    try { log.info(`Sign layer → ${ass ? ass.length + ' chars' : (_signsViaCss ? 'via CSS (CJK)' : 'cleared')} (libass=${isLibassSigns()} active=${overlayActive} mode=${getSignSrcMode()} pri=${_signRawAss ? _signRawAss.length : 0} sec=${_secondaryRawAss ? _secondaryRawAss.length : 0} secHasSigns=${_secondaryHasSigns} viaCss=${_signsViaCss})`); } catch (_) {}
     // Re-assert the toggle token on <html> first: CR's framework can strip our
     // custom data-* attribute during hydration, after which content.js reads a
     // null token and rejects every sign push.  Setting it right before the post
@@ -2449,16 +2501,160 @@
   // signs only while the overlay is active, and clears the moment it turns off).
   function setOverlayActive(v) { overlayActive = v; pushSignLayer(); }
 
+  // Tracks whether a spoken (dialogue) line was on screen last tick, so study
+  // auto-pause can fire exactly once on the showing→gap transition.
+  let wasShowingLine = false;
+
+  // ── Dual subtitles (secondary track) ──────────────────────────────────────
+  // A second locale shown alongside the primary, chosen from the ▾ menu's
+  // "Second subtitle" picker and persisted across episodes.  Same timeline as
+  // the primary (both come from the JP session row), so no remaster is needed.
+  const SECONDARY_PREF_KEY = 'crSubFix_secondary';
+  const getSecondaryPref = () => { try { return localStorage.getItem(SECONDARY_PREF_KEY) || ''; } catch (_) { return ''; } };
+  function setSecondaryPref(loc) {
+    try { if (loc) localStorage.setItem(SECONDARY_PREF_KEY, loc); else localStorage.removeItem(SECONDARY_PREF_KEY); } catch (_) {}
+  }
+  // Lazily (re)load the secondary track when the pref, the Episode, or the
+  // primary source changes.  Cheap no-op once in the desired state.  A secondary
+  // equal to the active primary is dropped (no duplicate band).
+  let _secState = { guid: null, want: null, primary: null };
+  function setSecondaryRaw(raw) {
+    _secondaryRawAss   = raw || null;
+    _secondaryHasSigns = !!(_secondaryRawAss && buildSignsAss(_secondaryRawAss));
+    pushSignLayer();
+  }
+  function maybeLoadSecondary(ep) {
+    const want    = getSecondaryPref();
+    const primary = ep.activeSource() || '';
+    if (_secState.guid === ep.guid && _secState.want === want && _secState.primary === primary) return;
+    const prev = _secState;
+    _secState = { guid: ep.guid, want, primary };
+    if (!want || want === primary) { ep.setSecondaryCues([]); setSecondaryRaw(null); renderer.invalidate(); return; }
+    // Custom sources (uploads / machine translations) are already in memory, so
+    // load synchronously from the registry — no fetch, no extra MT quota spent.
+    // Their signRawAss carries any signs (MT translates them; uploads keep theirs).
+    if (isCustomId(want)) {
+      const rec = ep.getCustomSource(want);
+      ep.setSecondaryCues(rec ? applyCustomSync(rec) : []);
+      setSecondaryRaw(rec?.signRawAss || null);
+      renderer.invalidate();
+      return;
+    }
+    // A pure primary-source change (same episode, same want) keeps the cues.
+    if (prev.guid === ep.guid && prev.want === want && ep.secondaryCues.length) return;
+    ep.setSecondaryCues([]);                          // clear stale while loading
+    fetchCuesForLocale(ep, want).then((r) => {
+      if (ep.disposed || currentEp() !== ep) return;
+      if (getSecondaryPref() !== want) return;        // changed again mid-fetch
+      ep.setSecondaryCues(r?.cues ?? []);
+      setSecondaryRaw(r?.rawText || null);             // for the "Signs" selector
+      renderer.invalidate();
+      onTimeUpdate();
+    }).catch(() => { if (!ep.disposed) { ep.setSecondaryCues([]); setSecondaryRaw(null); } });
+  }
+  function selectSecondary(locale) {
+    setSecondaryPref(locale || '');
+    const ep = currentEp();
+    if (!ep) return;
+    _secState = { guid: null, want: null, primary: null };  // force re-evaluate
+    maybeLoadSecondary(ep);
+    renderer.invalidate();
+    if (overlayActive) onTimeUpdate();
+  }
+
+  // Which \pos sign cues the CSS overlay should draw (when libass is off, or for
+  // the CJK fallback), mirroring the "Signs" selector's primary/secondary/both.
+  function cssSignCues(priCues, secCues) {
+    const mode = getSignSrcMode();
+    const pri = priCues.filter((c) => c.pos);
+    const sec = secCues.filter((c) => c.pos);
+    if (mode === 'secondary') return sec.length ? sec : pri;
+    if (mode === 'both') {
+      // Lift the secondary signs above the primary so they don't overlap (the
+      // "Both" sign-gap slider — % of video height, via the cue's PlayResY).
+      const gap = getSecondarySignGap();
+      const lifted = gap
+        ? sec.map((c) => ({ ...c, pos: { x: c.pos.x, y: c.pos.y - (gap / 100) * (c.playResY || 360) } }))
+        : sec;
+      return pri.concat(lifted);
+    }
+    return pri;
+  }
+
   function onTimeUpdate() {
     if (!overlayActive || !videoEl) return;
     const ep = currentEp();
     if (!ep) return;
+    maybeLoadSecondary(ep);
     const offset = getSyncOffset();
-    let active = ep.cuesAt(videoEl.currentTime, offset);
-    // libass owns the \pos typeset signs — keep them out of the CSS overlay so
-    // they don't double-render.
-    if (isLibassSigns()) active = active.filter((c) => !c.pos);
-    renderer.render(active, videoEl.currentTime + offset, captureStyleCtxs());
+    const t = videoEl.currentTime;
+    const priAll = ep.cuesAt(t, offset);
+    const secAll = ep.secondaryCues.length ? ep.secondaryCuesAt(t, offset) : [];
+    const dialogue = priAll.filter((c) => !c.pos);
+
+    // Study mode: pause the instant a dialogue line finishes.  We act only on
+    // the showing→gap transition, and timeupdate stops firing once paused, so it
+    // can't loop; on the transition we SKIP the empty render so the just-ended
+    // line stays readable while paused.
+    const showingLine = dialogue.length > 0;
+    if (wasShowingLine && !showingLine && isAutoPauseLine() && !videoEl.paused) {
+      wasShowingLine = false;
+      videoEl.pause();
+      return;  // leave the last line on screen
+    }
+    wasShowingLine = showingLine;
+
+    // libass owns the \pos signs UNLESS they're routed to CSS (CJK fallback) or
+    // libass is off — then the CSS overlay draws them (system fonts), per the
+    // sign-source mode.
+    const cssCues = (isLibassSigns() && !_signsViaCss)
+      ? dialogue
+      : dialogue.concat(cssSignCues(priAll, secAll));
+
+    const secDialogue = secAll.filter((c) => !c.pos);
+    renderer.render(cssCues, t + offset, captureStyleCtxs(), secDialogue.length ? secDialogue : null);
+  }
+
+  // ── Study hotkeys: replay / copy the line on screen ───────────────────────
+  // Seek to the start of the most recent dialogue line — "wait, what did they
+  // say?" and shadowing.  Repeated presses step back line-by-line: the 0.4 s
+  // epsilon makes a press from mid-line jump to THIS line's start, then to the
+  // previous one.  Compares in cue-time (videoTime + the display offset).
+  function replayLine() {
+    const ep = currentEp();
+    if (!ep || !videoEl) return;
+    const cues = ep.remasteredCues ?? ep.originalCues;
+    if (!cues || !cues.length) return;
+    const offset = getSyncOffset();
+    const now = videoEl.currentTime + offset;
+    let target = cues[0].start;
+    for (let i = cues.length - 1; i >= 0; i--) {
+      if (cues[i].start < now - 0.4) { target = cues[i].start; break; }
+    }
+    try { videoEl.currentTime = Math.max(0, target - offset); } catch (_) {}
+    if (videoEl.paused) videoEl.play().catch(() => {});
+    wasShowingLine = false;  // re-arm study auto-pause for the replayed line
+  }
+
+  // Copy the dialogue currently on screen (dictionary lookup, study decks,
+  // quoting a line).  Reads the live active cues; dialogue only, not signs.
+  async function copyActiveLine() {
+    const ep = currentEp();
+    if (!ep || !videoEl) return;
+    const offset = getSyncOffset();
+    const text = ep.cuesAt(videoEl.currentTime, offset)
+      .filter((c) => !c.pos)
+      .map((c) => c.text)
+      .join('\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+    if (!text) { UI.showToast({ host: toastHost(), text: 'No subtitle line right now' }); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      UI.showToast({ host: toastHost(), text: 'Copied subtitle line' });
+    } catch (_) {
+      UI.showToast({ host: toastHost(), text: 'Could not copy to clipboard' });
+    }
   }
 
   // Race fix: the first paint after toggling JP CC on can land BEFORE
@@ -2572,14 +2768,14 @@
       bottom:        '12%',
       left:          '50%',
       transform:     'translateX(-50%)',
-      background:    'rgba(0,0,0,0.78)',
-      color:         'rgba(255,200,150,0.95)',
+      background:    THEME.panelBg,
+      color:         THEME.text,
       fontSize:      '12px',
-      fontFamily:    'sans-serif',
+      fontFamily:    THEME.font,
       fontWeight:    '500',
       padding:       '6px 8px 6px 14px',
       borderRadius:  '20px',
-      border:        '1px solid rgba(255,107,53,0.35)',
+      border:        `1px solid ${THEME.panelEdge}`,
       zIndex:        '2147483641',
       display:       'flex',
       alignItems:    'center',
@@ -2594,8 +2790,8 @@
     const btn = document.createElement('button');
     btn.textContent = 'Retry';
     Object.assign(btn.style, {
-      background:   '#ff6b35',
-      color:        '#fff',
+      background:   THEME.accent,
+      color:        THEME.accentText,
       border:       '0',
       borderRadius: '12px',
       padding:      '3px 10px',
@@ -2723,19 +2919,21 @@
     const lbl = getSourceShortLabel();
     // Remaster sync status is exposed on the popup status detail line
     // ("Synced") so the button itself stays clean — just locale + ✓.
+    // Borderless: idle sits quietly in the player's own text colour and only
+    // lights up in our accent when active — so it reads as native chrome that
+    // happens to be ours, not a boxed add-on.
     const S = {
-      idle:    { text: 'B-SUB',      bg: 'transparent', color: '#ff6b35', border: '#ff6b35' },
-      loading: { text: `${lbl}…`,    bg: 'transparent', color: '#aaa',    border: '#aaa'    },
-      active:  { text: `${lbl} ✓`,   bg: '#ff6b35',     color: '#fff',    border: '#ff6b35' },
-      error:   { text: 'B-SUB ✗',    bg: 'transparent', color: '#e55',    border: '#e55'    },
-      reload:  { text: '↻ Reload',   bg: 'transparent', color: '#4ea8de', border: '#4ea8de' },
-      unavail: { text: 'No subs',    bg: 'transparent', color: '#666',    border: '#555'    },
+      idle:    { text: 'B-SUB',      bg: 'transparent',     color: THEME.text     },
+      loading: { text: `${lbl}…`,    bg: 'transparent',     color: THEME.textDim  },
+      active:  { text: `${lbl} ✓`,   bg: THEME.accentTint,  color: THEME.accent   },
+      error:   { text: 'B-SUB ✗',    bg: 'transparent',     color: THEME.danger   },
+      reload:  { text: '↻ Reload',   bg: 'transparent',     color: THEME.info     },
+      unavail: { text: 'No subs',    bg: 'transparent',     color: THEME.textMuted},
     };
     const s = S[state] ?? S.idle;
-    btn.textContent       = s.text;
-    btn.style.background  = s.bg;
-    btn.style.color       = s.color;
-    btn.style.borderColor = s.border;
+    btn.textContent      = s.text;
+    btn.style.background = s.bg;
+    btn.style.color      = s.color;
   }
 
   function refreshButtonLabel() {
@@ -3232,7 +3430,7 @@
     });
     const fill = document.createElement('div');
     fill.dataset.fill = '1';
-    Object.assign(fill.style, { width: '0%', height: '100%', background: '#ff6b35', transition: 'width 0.3s ease' });
+    Object.assign(fill.style, { width: '0%', height: '100%', background: THEME.accent, transition: 'width 0.3s ease' });
     bar.appendChild(fill);
     btn.parentElement.insertBefore(bar, btn);
   }
@@ -3271,16 +3469,16 @@
       buttonInControls = true;
       Object.assign(btn.style, {
         background:    'transparent',
-        color:         '#ff6b35',
-        border:        '1.5px solid #ff6b35',
-        borderRadius:  '3px',
+        color:         THEME.text,
+        border:        '1px solid transparent',  // no box; reserve space so hover/active never shifts layout
+        borderRadius:  '4px',
         padding:       '3px 7px',
-        fontSize:      '11px',
-        fontWeight:    '700',
-        fontFamily:    'sans-serif',
+        fontSize:      '12px',
+        fontWeight:    '600',
+        fontFamily:    THEME.font,               // adopt the player's typeface
         lineHeight:    '1',
         cursor:        'pointer',
-        letterSpacing: '0.5px',
+        letterSpacing: '0.3px',
         userSelect:    'none',
         transition:    'background 0.15s, color 0.15s',
         alignSelf:     'center',
@@ -3295,23 +3493,26 @@
       log.info('JP CC button injected into controls bar.');
     } else {
       buttonInControls = false;
+      // Fallback pill (no controls row found): keep a faint backing so it stays
+      // legible floating over the video, but match the panel idiom + accent.
       Object.assign(btn.style, {
         position:      'fixed',
         bottom:        '90px',
         right:         '20px',
         zIndex:        '2147483647',
-        background:    'rgba(0,0,0,0.7)',
-        color:         '#ff6b35',
-        border:        '2px solid #ff6b35',
-        borderRadius:  '5px',
+        background:    THEME.panelBg,
+        color:         THEME.text,
+        border:        `1px solid ${THEME.panelEdge}`,
+        borderRadius:  '6px',
         padding:       '5px 10px',
         fontSize:      '12px',
-        fontWeight:    '700',
-        fontFamily:    'sans-serif',
+        fontWeight:    '600',
+        fontFamily:    THEME.font,
         lineHeight:    '1',
         cursor:        'pointer',
-        letterSpacing: '0.5px',
+        letterSpacing: '0.3px',
         userSelect:    'none',
+        boxShadow:     THEME.panelShadow,
         transition:    'background 0.15s, color 0.15s',
       });
       (document.body || document.documentElement).appendChild(btn);
@@ -3320,12 +3521,11 @@
 
     setButtonState(btn, 'idle');
     btn.addEventListener('mouseenter', () => {
-      if (!overlayActive) btn.style.background = buttonInControls
-        ? 'rgba(255,107,53,0.15)' : 'rgba(255,107,53,0.25)';
+      if (!overlayActive) btn.style.background = THEME.rowHover;
     });
     btn.addEventListener('mouseleave', () => {
       if (!overlayActive) btn.style.background = buttonInControls
-        ? 'transparent' : 'rgba(0,0,0,0.7)';
+        ? 'transparent' : THEME.panelBg;
     });
     btn.addEventListener('click', e => { e.stopPropagation(); handleButtonClick(btn); });
     if (found) sourceMenu.injectButton(found, btn);
@@ -3392,6 +3592,14 @@
           injectButton();
         }
       }
+
+      // Self-heal the ▾ picker's visibility every tick.  A dub switch re-injects
+      // the button before the Episode is fully wired, and the only other reveal
+      // is the JP-playback path — which never fires for a non-JP dub's transient
+      // Episode.  Re-evaluating here (cheap: a getElementById + a style set, and
+      // a no-op when the button is absent) guarantees it appears once currentEp()
+      // is live, instead of staying stuck hidden until the next dub change.
+      sourceMenu.updateButtonVisibility();
     }, 100);
 
     new MutationObserver(check).observe(document.body ?? document.documentElement, { childList: true, subtree: true });
@@ -3486,10 +3694,11 @@
     wrap.id = 'cr-sub-report-nudge';
     wrap.style.cssText =
       'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;' +
-      'display:flex;align-items:center;gap:12px;max-width:92vw;background:#16213e;color:#e0e0e0;' +
-      'border:1px solid rgba(255,107,53,0.5);border-radius:10px;padding:11px 14px;' +
-      'font:500 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
-      'box-shadow:0 8px 24px rgba(0,0,0,0.55);';
+      'display:flex;align-items:center;gap:12px;max-width:92vw;' +
+      `background:${THEME.panelBg};color:${THEME.text};` +
+      `border:1px solid ${THEME.panelEdge};border-radius:10px;padding:11px 14px;` +
+      // No font-family → inherit the player's typeface from <html>.
+      `font-weight:500;font-size:13px;line-height:1.4;box-shadow:${THEME.panelShadow};`;
     const msg = document.createElement('span');
     msg.textContent = '⚠ Better Subs hit an error. Send a quick report?';
     const send = document.createElement('button');
@@ -3498,9 +3707,9 @@
     dismiss.textContent = 'Dismiss';
     for (const b of [send, dismiss]) {
       b.type = 'button';
-      b.style.cssText = 'font:600 12px inherit;border-radius:6px;padding:5px 12px;cursor:pointer;border:1px solid #333;background:#0f0f1e;color:#aaa;';
+      b.style.cssText = `font-weight:600;font-size:12px;border-radius:6px;padding:5px 12px;cursor:pointer;border:1px solid ${THEME.panelEdge};background:rgba(255,255,255,0.06);color:${THEME.textDim};`;
     }
-    send.style.color = '#ff6b35'; send.style.borderColor = 'rgba(255,107,53,0.6)';
+    send.style.color = THEME.accent; send.style.borderColor = THEME.accent;
     const host = () => document.fullscreenElement || document.documentElement;
     let done = false, keepAlive = null;
     const close = () => {
@@ -3643,6 +3852,7 @@
         if (ep.disposed) { /* navigation happened mid-fetch — drop */ }
         else {
           if (jpData?.jpRow) storeSessionSubs('ja-JP', jpData.jpRow);
+          ensureVersionList(ep);  // populate the picker even if the full setVersions block is skipped
           if (jpData?.captionUrl || jpData?.subtitleUrl) {
             ep.setJpUrls(jpData.captionUrl ?? null, jpData.subtitleUrl ?? null);
             ep.setJpGuid(cachedJpGuid);

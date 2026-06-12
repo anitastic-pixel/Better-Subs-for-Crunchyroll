@@ -14,6 +14,9 @@ const statusText          = document.getElementById('statusText');
 const offsetReset         = document.getElementById('offsetReset');
 const subBottomFloor      = document.getElementById('subBottomFloor');
 const subBottomFloorLabel = document.getElementById('subBottomFloorLabel');
+const toggleAutoPause     = document.getElementById('toggleAutoPause');
+const secSignGap          = document.getElementById('secSignGap');
+const secSignGapLabel     = document.getElementById('secSignGapLabel');
 // Style override
 const styleTargetSeg      = document.getElementById('styleTargetSeg');
 const toggleStyleOverrideLabel = document.getElementById('toggleStyleOverrideLabel');
@@ -342,6 +345,8 @@ function populateFromSettings(s) {
   toggleAuto.checked    = s.autoActivate;
   toggleHideOfficial.checked = s.hideOfficialSubs;
   toggleIncludeDiag.checked  = s.includeDiagnostics;
+  if (toggleAutoPause) toggleAutoPause.checked = s.autoPauseLine;
+  if (secSignGap) { secSignGap.value = s.secondarySignGap; secSignGapLabel.textContent = `${s.secondarySignGap}%`; }
   const pct = Math.round(s.subScale * 100);
   scaleSlider.value      = pct;
   scaleLabel.textContent = `${pct}%`;
@@ -495,6 +500,9 @@ toggleAuto.addEventListener('change', () => {
 toggleHideOfficial.addEventListener('change', () => {
   chrome.storage.local.set({ hideOfficialSubs: toggleHideOfficial.checked });
 });
+toggleAutoPause?.addEventListener('change', () => {
+  chrome.storage.local.set({ autoPauseLine: toggleAutoPause.checked });
+});
 toggleIncludeDiag.addEventListener('change', () => {
   chrome.storage.local.set({ includeDiagnostics: toggleIncludeDiag.checked });
 });
@@ -548,6 +556,12 @@ subBottomFloor.addEventListener('input', () => {
   const v = parseInt(subBottomFloor.value);
   subBottomFloorLabel.textContent = `${v}%`;
   chrome.storage.local.set({ subBottomFloor: v });
+});
+
+secSignGap?.addEventListener('input', () => {
+  const v = parseInt(secSignGap.value);
+  secSignGapLabel.textContent = `${v}%`;
+  chrome.storage.local.set({ secondarySignGap: v });
 });
 
 // ── Style override controls ───────────────────────────────────────────────
@@ -885,3 +899,20 @@ try {
   const verEl = document.getElementById('appVersion');
   if (verEl) verEl.textContent = 'v' + chrome.runtime.getManifest().version;
 } catch (_) {}
+
+// ── Remember collapsible sections' open/closed state across popup opens ──────
+// The HTML sets the first-run defaults (Playback open, the rest collapsed); once
+// the user opens or closes a section we honour their choice next time.  UI-only
+// state, so it lives in the popup's own localStorage, not the settings schema.
+(function persistSectionState() {
+  const KEY = 'crSubFix_popupSections';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (_) {}
+  for (const d of document.querySelectorAll('details[id]')) {
+    if (typeof saved[d.id] === 'boolean') d.open = saved[d.id];
+    d.addEventListener('toggle', () => {
+      saved[d.id] = d.open;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_) {}
+    });
+  }
+})();

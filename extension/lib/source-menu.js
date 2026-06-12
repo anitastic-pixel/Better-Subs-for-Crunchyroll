@@ -37,11 +37,13 @@
   'use strict';
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
-  if (!NS.CRSubFix) return;
+  if (!NS.CRSubFix || !NS.CRSubFix.uiTheme) return;
 
   const MENU_BTN_ID = 'cr-bsub-menu-btn';
   const MENU_ID     = 'cr-bsub-menu';
   const LOG         = '[CR Sub Fix]';
+  const THEME       = NS.CRSubFix.uiTheme.tokens;
+  const panelStyle  = NS.CRSubFix.uiTheme.panel;
 
   function createSourceMenu({
     getEpisode, isOverlayActive,
@@ -50,11 +52,15 @@
     onSelectCustom, onLoadFile, onRemoveCustom, onAdjustSync, onExport,
     onTranslate, getTranslateAction, onClearMt, getClearMtAction,
     onCancelTranslate, getCancelAction, onMtSettings, getMtSettingsAction,
+    onSelectSecondary, getSecondary,
+    onSetSignSource, getSignSource, getSecondaryHasSigns,
   }) {
     let outsideHandler = null;
     let escapeHandler  = null;
+    let secondaryMode  = false;  // the menu is showing the "Second subtitle" picker
 
     function close() {
+      secondaryMode = false;  // next open starts on the main source list
       document.getElementById(MENU_ID)?.remove();
       if (outsideHandler) {
         document.removeEventListener('click', outsideHandler, true);
@@ -90,8 +96,8 @@
         padding:      '7px 14px',
         cursor:       unavail ? 'default' : 'pointer',
         fontSize:     '13px',
-        fontFamily:   'sans-serif',
-        color:        isActive ? '#ff6b35' : unavail ? '#555' : isWrong ? '#cc9900' : '#e0e0e0',
+        fontFamily:   THEME.font,
+        color:        isActive ? THEME.accent : unavail ? THEME.textMuted : isWrong ? THEME.warn : THEME.text,
         fontWeight:   isActive ? '700' : '400',
         background:   'transparent',
         userSelect:   'none',
@@ -135,7 +141,7 @@
         row.appendChild(tag);
       }
       if (!unavail) {
-        row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,107,53,0.15)'; });
+        row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
         row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       }
       row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
@@ -151,7 +157,7 @@
       if (isActive) row.dataset.active = 'true';
       Object.assign(row.style, {
         padding: '7px 14px', cursor: 'pointer', fontSize: '13px',
-        fontFamily: 'sans-serif', color: isActive ? '#ff6b35' : '#e0e0e0',
+        fontFamily: THEME.font, color: isActive ? THEME.accent : THEME.text,
         fontWeight: isActive ? '700' : '400', background: 'transparent',
         userSelect: 'none', whiteSpace: 'nowrap', display: 'flex',
         alignItems: 'center', gap: '8px', borderRadius: '3px',
@@ -178,7 +184,7 @@
       row.appendChild(text);
       row.appendChild(tag);
       row.appendChild(del);
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,107,53,0.15)'; });
+      row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       del.addEventListener('click', e => { e.stopPropagation(); onRemove?.(); });
       row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
@@ -190,13 +196,13 @@
       const row = document.createElement('div');
       Object.assign(row.style, {
         padding: '7px 14px 7px 36px', cursor: 'pointer', fontSize: '12px',
-        fontFamily: 'sans-serif', color: '#9ecbff', fontWeight: '500',
+        fontFamily: THEME.font, color: THEME.textDim, fontWeight: '500',
         background: 'transparent', userSelect: 'none', whiteSpace: 'nowrap',
         borderRadius: '3px',
       });
       row.textContent = label;
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,107,53,0.15)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; row.style.color = THEME.text; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; row.style.color = THEME.textDim; });
       row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
       return row;
     }
@@ -240,24 +246,126 @@
       }
     }
 
-    function buildContent(menuEl) {
-      const ep = getEpisode();
-      if (!ep) return;
-      menuEl.innerHTML = '';
-
-      const header = document.createElement('div');
-      header.textContent = 'Subtitle Source';
-      Object.assign(header.style, {
+    function makeSectionHeader(text) {
+      const h = document.createElement('div');
+      h.textContent = text;
+      Object.assign(h.style, {
         padding:       '7px 14px 5px',
         fontSize:      '11px',
-        fontFamily:    'sans-serif',
-        color:         '#888',
+        fontFamily:    THEME.font,
+        color:         THEME.textDim,
         fontWeight:    '600',
         letterSpacing: '0.5px',
         textTransform: 'uppercase',
         userSelect:    'none',
       });
-      menuEl.appendChild(header);
+      return h;
+    }
+    function makeDivider() {
+      const d = document.createElement('div');
+      d.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
+      return d;
+    }
+
+    // "Signs" selector for dual subtitles: which track draws the typeset signs.
+    // Primary / Secondary pick one clean track; Both merges them (may overlap).
+    function makeSignSourceRow(rebuild) {
+      // CR ships some locales dialogue-only — grey out Secondary/Both (and note
+      // it) when the loaded secondary track carries no typeset signs.
+      const hasSigns = (typeof getSecondaryHasSigns === 'function') ? !!getSecondaryHasSigns() : true;
+      const wrap = document.createElement('div');
+      const row = document.createElement('div');
+      Object.assign(row.style, {
+        padding: '7px 14px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', gap: '8px', fontFamily: THEME.font,
+      });
+      const label = document.createElement('span');
+      label.textContent = 'Signs';
+      label.style.cssText = `font-size:11px;color:${THEME.text};`;
+      const seg = document.createElement('div');
+      seg.style.cssText = 'display:flex;gap:3px;';
+      const cur = getSignSource?.() || 'primary';
+      for (const [val, txt] of [['primary', 'Primary'], ['secondary', 'Secondary'], ['both', 'Both']]) {
+        const disabled = !hasSigns && val !== 'primary';
+        const b = document.createElement('button');
+        b.textContent = txt;
+        const active = cur === val;
+        b.style.cssText =
+          'padding:3px 7px;font-size:10px;font-weight:600;font-family:inherit;border-radius:4px;flex-shrink:0;' +
+          (disabled ? 'cursor:default;opacity:0.4;' : 'cursor:pointer;') +
+          (active
+            ? `background:${THEME.accentTint};color:${THEME.accent};border:1px solid ${THEME.accent};`
+            : `background:rgba(255,255,255,0.06);color:${THEME.textDim};border:1px solid ${THEME.panelEdge};`);
+        if (disabled) b.title = 'This track has no typeset signs';
+        else b.addEventListener('click', (e) => { e.stopPropagation(); onSetSignSource?.(val); rebuild(); });
+        seg.appendChild(b);
+      }
+      row.appendChild(label);
+      row.appendChild(seg);
+      wrap.appendChild(row);
+      if (!hasSigns) {
+        const note = document.createElement('div');
+        note.textContent = 'This subtitle track has no typeset signs.';
+        note.style.cssText = `padding:0 14px 6px;font-size:10px;line-height:1.4;color:${THEME.textMuted};`;
+        wrap.appendChild(note);
+      }
+      return wrap;
+    }
+
+    function buildContent(menuEl) {
+      const ep = getEpisode();
+      if (!ep) return;
+      menuEl.innerHTML = '';
+
+      // ── Secondary-subtitle picker (dual subtitles) ────────────────────────
+      // A submenu so the main list stays compact: pick a second locale shown
+      // alongside the primary, or "Off" for a single track.  The active primary
+      // is excluded (a track can't be its own secondary).
+      if (secondaryMode) {
+        menuEl.appendChild(makeSectionHeader('Second subtitle'));
+        menuEl.appendChild(makeActionRow('‹ Back to sources', () => { secondaryMode = false; buildContent(menuEl); }));
+        menuEl.appendChild(makeDivider());
+        const cur     = getSecondary?.() || '';
+        const primary = ep.activeSource() ?? 'ja-JP';
+        menuEl.appendChild(makeRow('Off (single subtitle)', !cur, true, () => {
+          close(); onSelectSecondary?.('');
+        }, null, null));
+        for (const v of ep.catalog.versions()) {
+          if (v.locale === primary) continue;
+          const label = localeLabels[v.locale] ?? v.locale;
+          menuEl.appendChild(makeRow(label, cur === v.locale, localeHasContent(ep, v.locale), () => {
+            close(); onSelectSecondary?.(v.locale);
+          }, null, null));
+        }
+        // Custom sources (uploads / machine translations) are valid secondaries
+        // too — pair, say, a CR primary with a machine-translated second language.
+        const secCustoms = (ep.listCustomSources?.() ?? []).filter(c => c.id !== primary);
+        if (secCustoms.length) {
+          menuEl.appendChild(makeDivider());
+          let hasMt = false;
+          for (const cs of secCustoms) {
+            if (cs.kind === 'mt') hasMt = true;
+            const tag = cs.kind === 'mt' ? ' · machine' : ' · file';
+            menuEl.appendChild(makeRow((cs.label || cs.id) + tag, cur === cs.id, true, () => {
+              close(); onSelectSecondary?.(cs.id);
+            }, null, null));
+          }
+          if (hasMt) {
+            const note = document.createElement('div');
+            note.textContent = '⚠ A second machine translation uses extra DeepL quota.';
+            note.style.cssText = `padding:4px 14px 6px;font-size:10px;line-height:1.4;color:${THEME.warn};`;
+            menuEl.appendChild(note);
+          }
+        }
+        // Sign-track selector — only meaningful once a secondary is chosen.
+        if (cur && onSetSignSource) {
+          menuEl.appendChild(makeDivider());
+          menuEl.appendChild(makeSignSourceRow(() => buildContent(menuEl)));
+        }
+        return;
+      }
+
+      menuEl.appendChild(makeSectionHeader('Subtitle Source'));
 
       const div1 = document.createElement('div');
       div1.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:0 8px 4px;';
@@ -342,6 +450,20 @@
         }));
       }
 
+      // Dual subtitles: enter the "Second subtitle" submenu.  Shows the current
+      // choice inline so it's discoverable at a glance.
+      if (onSelectSecondary) {
+        const cur = getSecondary?.() || '';
+        // A custom-source id (custom:mt:…) isn't in localeLabels — resolve it to
+        // the source's friendly label instead of showing the raw id.
+        const curCustom = (ep.listCustomSources?.() ?? []).find(c => c.id === cur);
+        const secLabel = cur ? (curCustom?.label || localeLabels[cur] || cur) : 'Off';
+        menuEl.appendChild(makeActionRow(`Second subtitle: ${secLabel}  ›`, () => {
+          secondaryMode = true;
+          buildContent(menuEl);
+        }));
+      }
+
       const div2 = document.createElement('div');
       div2.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
       menuEl.appendChild(div2);
@@ -359,17 +481,17 @@
 
       const menu = document.createElement('div');
       menu.id = MENU_ID;
-      Object.assign(menu.style, {
-        position:     'fixed',
-        zIndex:       '2147483646',
-        background:   '#1a1a2e',
-        border:       '1px solid rgba(255,107,53,0.4)',
-        borderRadius: '6px',
-        boxShadow:    '0 4px 20px rgba(0,0,0,0.6)',
-        minWidth:     '170px',
-        padding:      '4px 0',
-        userSelect:   'none',
-      });
+      Object.assign(menu.style, panelStyle({
+        position:  'fixed',
+        zIndex:    '2147483646',
+        minWidth:  '170px',
+        padding:   '4px 0',
+        // Long source lists (10 locales + customs + actions + the secondary
+        // entry) can exceed the viewport — cap the height and scroll instead of
+        // running off the top/bottom edge.
+        maxHeight: 'min(82vh, 680px)',
+        overflowY: 'auto',
+      }));
 
       buildContent(menu);
       // Mount INSIDE the player — the video's parent, or the fullscreen element —
@@ -410,15 +532,16 @@
       }, 0);
     }
 
-    // Show the picker whenever there is at least one source to act on.  It is
-    // the only entry point to "Load subtitle file…", and single-locale episodes
-    // (e.g. a show CR ships with no ja-JP track) are exactly where a user wants
-    // to upload — so the old "hide unless >1 locale" rule would bury the feature.
+    // Show the picker whenever we're on an Episode.  The menu always offers
+    // "＋ Load subtitle file…" (its only entry point) and "Off", and CR always
+    // carries ≥1 locale once data arrives — so there's always something to act
+    // on.  We deliberately do NOT gate on catalog.versions(): that list lags a
+    // dub switch (the JP-playback handler populates it, and only THEN calls
+    // updateButtonVisibility), so gating on it injected the ▾ hidden during the
+    // dub-switch nav and left it hidden — the picker would intermittently
+    // vanish after changing dubs.  Gate on the Episode existing instead.
     function menuHasContent() {
-      const ep = getEpisode();
-      const versions = ep?.catalog.versions() ?? [];
-      const customs  = ep?.listCustomSources?.() ?? [];
-      return versions.length >= 1 || customs.length > 0;
+      return !!getEpisode();
     }
 
     function updateButtonVisibility() {
@@ -438,29 +561,28 @@
 
       Object.assign(menuBtn.style, {
         background:   'transparent',
-        color:        '#ff6b35',
-        border:       '1.5px solid #ff6b35',
-        borderRadius: '3px',
+        color:        THEME.text,
+        border:       '1px solid transparent',  // borderless like the toggle; no box
+        borderRadius: '4px',
         padding:      '3px 5px',
-        fontSize:     '11px',
-        fontWeight:   '700',
-        fontFamily:   'sans-serif',
+        fontSize:     '12px',
+        fontWeight:   '600',
+        fontFamily:   THEME.font,
         lineHeight:   '1',
         cursor:       'pointer',
         userSelect:   'none',
         transition:   'background 0.15s, color 0.15s',
         alignSelf:    'center',
         flexShrink:   '0',
-        // Visible gap between the JP CC button and the ▾ picker.  Combined
-        // with the JP button's marginRight=6px this lands at ~20px between
-        // the two boxes — roughly matching the spacing between Crunchyroll's
-        // own left-side player buttons so this control reads consistently.
-        marginLeft:   '14px',
+        // Hug the toggle (the JP button keeps marginRight=6px) so the two read
+        // as one split control — a label + its caret — rather than two separate
+        // boxes, matching how the player groups a control with its menu affordance.
+        marginLeft:   '0',
         marginRight:  '4px',
         display:      menuHasContent() ? '' : 'none',
       });
 
-      menuBtn.addEventListener('mouseenter', () => { menuBtn.style.background = 'rgba(255,107,53,0.15)'; });
+      menuBtn.addEventListener('mouseenter', () => { menuBtn.style.background = THEME.rowHover; });
       menuBtn.addEventListener('mouseleave', () => { menuBtn.style.background = 'transparent'; });
       menuBtn.addEventListener('click', e => { e.stopPropagation(); open(); });
 

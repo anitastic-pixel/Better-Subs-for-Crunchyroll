@@ -23,6 +23,12 @@
     { key: 'subScale',             attr: 'data-cr-sub-scale',      default: 1,          type: 'float'  },
     { key: 'subOffset',            attr: 'data-cr-sub-offset',     default: 0,          type: 'float'  },
     { key: 'subBottomFloor',       attr: 'data-cr-sub-bottom-floor', default: 6,        type: 'int'    },
+    // Study mode: pause playback the moment a dialogue line ends (kept visible),
+    // for shadowing / reading along.  Opt-in; pairs with the Alt+R replay hotkey.
+    { key: 'autoPauseLine',        attr: 'data-cr-auto-pause',      default: false,      type: 'bool'   },
+    // Dual signs ("Both" mode): how far (% of video height) to lift the secondary
+    // track's typeset signs above the primary's so the two don't overlap.
+    { key: 'secondarySignGap',     attr: 'data-cr-sec-sign-gap',    default: 8,          type: 'int'    },
     { key: 'styleOverride',        attr: 'data-cr-style-override', default: false,      type: 'bool'   },
     { key: 'overrideFontFamily',   attr: 'data-cr-font-family',    default: '',         type: 'string' },
     { key: 'overrideTextColor',    attr: 'data-cr-override-color', default: '#ffffff',  type: 'string' },

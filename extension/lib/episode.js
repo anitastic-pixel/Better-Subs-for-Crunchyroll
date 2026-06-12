@@ -128,12 +128,17 @@
       return function (...args) { if (!disposed) return fn.apply(null, args); };
     }
 
+    // Secondary subtitle track (dual subtitles): a second locale's cues shown
+    // alongside the primary.  Same timeline as the primary (both come from the
+    // JP session row), so no remaster needed.  Independent of the active Source —
+    // a primary-source change leaves this in place.
+    let secondaryCues = [];
+
     // ── Cue access (hot path) ─────────────────────────────────────────────────
     // Picks remasteredCues over originalCues automatically.  Caller does not
     // know which array is current — that decision lives here.
-    function cuesAt(videoTime, offsetSec) {
-      const cues = remasteredCues ?? originalCues;
-      if (!cues.length) return [];
+    function scanCues(cues, videoTime, offsetSec) {
+      if (!cues || !cues.length) return [];
       const t = videoTime + (offsetSec || 0);
       let lo = 0, hi = cues.length - 1, right = -1;
       while (lo <= hi) {
@@ -149,6 +154,8 @@
       result.reverse();
       return result;
     }
+    function cuesAt(videoTime, offsetSec) { return scanCues(remasteredCues ?? originalCues, videoTime, offsetSec); }
+    function secondaryCuesAt(videoTime, offsetSec) { return scanCues(secondaryCues, videoTime, offsetSec); }
 
     function hasCues() { return originalCues.length > 0; }
 
@@ -259,7 +266,12 @@
 
       // ── Hot path: cue read ────────────────────────────────────────────────
       cuesAt,
+      secondaryCuesAt,
       hasCues,
+
+      // ── Secondary track (dual subtitles) ──────────────────────────────────
+      get secondaryCues() { return secondaryCues; },
+      setSecondaryCues: alive(c => { secondaryCues = c || []; }),
 
       // ── Source / Audio session ────────────────────────────────────────────
       activeSource,

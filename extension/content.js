@@ -313,11 +313,23 @@
     return octopusBlobUrl;
   }
 
+  // True only while our extension context is alive.  After the extension is
+  // reloaded or updated, the content script in an already-open tab keeps running
+  // but every chrome.* call (including getURL) throws "Extension context
+  // invalidated".  libass init pulls its worker/wasm/fonts via getURL, so we
+  // guard that whole path and fail quietly — reloading the page re-injects a
+  // fresh content script.  This is benign lifecycle, NOT a bug worth reporting.
+  function extensionAlive() {
+    try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; }
+  }
+  const isCtxDead = (e) => /context invalidated/i.test(String((e && e.message) || e));
+
   async function setOctopusAss(ass) {
     const seq = ++octopusSeq;
     const SO = self.SubtitlesOctopus || (typeof SubtitlesOctopus !== 'undefined' ? SubtitlesOctopus : null);
     const video = document.querySelector('video');
     if (!ass) { destroyOctopus(); return; }
+    if (!extensionAlive()) return;   // extension reloaded under an open tab — getURL is dead; a page reload fixes it
     if (!SO)    { console.warn('[CR Sub Fix] SubtitlesOctopus not loaded — signs fall back to CSS'); return; }
     if (!video) { console.warn('[CR Sub Fix] no <video> for libass yet'); return; }
     if (octopus && octopusAss === ass && octopusVideo === video) return;       // unchanged
@@ -332,7 +344,7 @@
     }
     let workerUrl;
     try { workerUrl = await octopusWorkerUrl(); }
-    catch (e) { console.warn('[CR Sub Fix] octopus worker load failed', e); return; }
+    catch (e) { if (!isCtxDead(e)) console.warn('[CR Sub Fix] octopus worker load failed', e); return; }
     if (seq !== octopusSeq) return;                                           // superseded while awaiting
     const v = document.querySelector('video');
     if (!ass || !v) { destroyOctopus(); return; }
@@ -351,7 +363,7 @@
         onReady: () => { dlog('[CR Sub Fix] libass ready ✓'); try { octopus && octopus.setCurrentTime(v.currentTime); } catch (_) {} },
       });
     } catch (e) {
-      console.warn('[CR Sub Fix] octopus init failed', e);
+      if (!isCtxDead(e)) console.warn('[CR Sub Fix] octopus init failed', e);
       octopus = null; octopusAss = null; octopusVideo = null;
     }
   }

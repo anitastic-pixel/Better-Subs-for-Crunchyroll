@@ -19,6 +19,11 @@
 (function () {
   'use strict';
 
+  const NS = (typeof self !== 'undefined' ? self : globalThis);
+  // Shared visual tokens (lib/ui-theme.js, loaded earlier).  Fall back to the
+  // prior literals if it's somehow absent, so toasts never break.
+  const T = (NS.CRSubFix && NS.CRSubFix.uiTheme && NS.CRSubFix.uiTheme.tokens) || {};
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -50,11 +55,11 @@
       background:    'rgba(0,0,0,0.52)',
       color,
       fontSize:      '12px',
-      fontFamily:    'sans-serif',
       fontWeight,
       padding:       '4px 14px',
       borderRadius:  '20px',
       border:        `1px solid ${borderColor}`,
+      fontFamily:    T.font || 'sans-serif',
       pointerEvents: 'none',
       zIndex:        String(zIndex),
       opacity:       '1',
@@ -84,11 +89,11 @@
         background:    'rgba(0,0,0,0.72)',
         color:         'rgba(255,255,255,0.88)',
         fontSize:      '11px',
-        fontFamily:    'monospace, sans-serif',
+        fontFamily:    T.font || 'monospace, sans-serif',
         fontWeight:    '500',
         padding:       '6px 16px 8px',
-        borderRadius:  '4px',
-        border:        '1px solid rgba(255,107,53,0.4)',
+        borderRadius:  '6px',
+        border:        `1px solid ${T.panelEdge || 'rgba(255,255,255,0.12)'}`,
         pointerEvents: 'none',
         zIndex:        '10',
         opacity:       '1',
@@ -107,12 +112,13 @@
       const h = el();
       if (!h) return;
       const pct = Math.round((step / total) * 100);
+      const accent = T.accent || '#ff6b35';
       h.innerHTML =
-        `<div style="margin-bottom:5px;color:#ff6b35;font-weight:700;letter-spacing:0.5px;">` +
+        `<div style="margin-bottom:5px;color:${accent};font-weight:700;letter-spacing:0.5px;">` +
           `⟳  step ${step}/${total}  <span style="color:rgba(255,255,255,0.5);">│</span>  ${desc}` +
         `</div>` +
         `<div style="height:2px;background:rgba(255,255,255,0.12);border-radius:1px;overflow:hidden;">` +
-          `<div style="width:${pct}%;height:100%;background:#ff6b35;border-radius:1px;transition:width 0.25s ease;"></div>` +
+          `<div style="width:${pct}%;height:100%;background:${accent};border-radius:1px;transition:width 0.25s ease;"></div>` +
         `</div>`;
     }
 
@@ -133,7 +139,6 @@
     return { update, html, fade };
   }
 
-  const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
   NS.CRSubFix.ui = { showToast, makeProgressHud, escapeHtml };
 })();
