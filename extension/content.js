@@ -165,10 +165,8 @@
   const FONT_TIMES = () => FONT_URL('Tinos-Regular.ttf');
   const FONT_SANS  = () => FONT_URL('Arimo.ttf');
   const FONT_MONO  = () => FONT_URL('Cousine-Regular.ttf');
-  const FONT_CJK   = () => FONT_URL('NotoSansKR.ttf');   // Hangul + CJK ideographs
-  // MT-translated signs in CJK scripts render as tofu boxes with the Latin faces
-  // above; detect CJK in the .ass so libass loads the (10MB) CJK font ONLY then.
-  const hasCJK = (s) => /[ᄀ-ᇿ　-ヿ㄰-鿿가-힯豈-﫿]/.test(s || '');
+  // CJK sign layers are routed to the CSS overlay (system fonts) by interceptor.js
+  // — libass never receives them here — so no CJK font is bundled.
   // "Original" path: map the .ass's own font names to bundled equivalents so
   // signs keep CR's serif/sans intent; unmatched names fall back to Tinos.
   const AVAILABLE_FONTS = () => ({
@@ -190,13 +188,12 @@
   // picked a sign font (sign_styleOverride + sign_overrideFontFamily), force
   // EVERY sign into that one face (omit availableFonts → all use fallbackFont);
   // otherwise keep the "Original" per-name mapping that matches CR.
-  function octopusFontOpts(ass) {
+  function octopusFontOpts() {
     const s = latestSettings || {};
-    const cjk = hasCJK(ass) ? { fonts: [FONT_CJK()] } : {};   // CJK fallback only when the signs need it
     if (s.sign_styleOverride && s.sign_overrideFontFamily) {
-      return { fallbackFont: signFontFileUrl(s.sign_overrideFontFamily), ...cjk };
+      return { fallbackFont: signFontFileUrl(s.sign_overrideFontFamily) };
     }
-    return { fallbackFont: FONT_TIMES(), availableFonts: AVAILABLE_FONTS(), ...cjk };
+    return { fallbackFont: FONT_TIMES(), availableFonts: AVAILABLE_FONTS() };
   }
 
   // CSS #rrggbb + 0-100 opacity → ASS &HAABBGGRR (alpha inverted: 00=opaque).
@@ -287,7 +284,7 @@
   function refreshOctopusStyle() {
     if (!octopus || !octopusAss) return;
     const ass = octopusAss;
-    if (JSON.stringify(octopusFontOpts(ass)) !== octopusFontKey) { destroyOctopus(); setOctopusAss(ass); return; }
+    if (JSON.stringify(octopusFontOpts()) !== octopusFontKey) { destroyOctopus(); setOctopusAss(ass); return; }
     try {
       octopus.setTrack(styleSignsAss(ass));
       // setTrack only queues the new .ass to the worker; libass repaints only on
@@ -334,9 +331,10 @@
     if (!video) { console.warn('[CR Sub Fix] no <video> for libass yet'); return; }
     if (octopus && octopusAss === ass && octopusVideo === video) return;       // unchanged
     if (octopus && octopusVideo === video) {                                   // same video, new track
-      // Same font set → just re-feed the track; but if it changed (e.g. the new
-      // .ass has CJK and now needs the CJK font on the FS), rebuild instead.
-      if (JSON.stringify(octopusFontOpts(ass)) === octopusFontKey) {
+      // Same font set → just re-feed the track; only a sign-FONT change (the
+      // user's chosen sign font) needs a full rebuild — fallbackFont is fixed
+      // at construction.
+      if (JSON.stringify(octopusFontOpts()) === octopusFontKey) {
         try { octopus.setTrack(styleSignsAss(ass)); octopusAss = ass; return; } catch (_) { destroyOctopus(); }
       } else {
         destroyOctopus();
@@ -352,7 +350,7 @@
     octopusVideo = v; octopusAss = ass;
     try {
       dlog('[CR Sub Fix] starting libass (' + ass.length + ' chars of signs)…');
-      const fontOpts = octopusFontOpts(ass);
+      const fontOpts = octopusFontOpts();
       octopusFontKey = JSON.stringify(fontOpts);
       octopus = new SO({
         video: v,
