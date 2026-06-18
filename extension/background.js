@@ -33,8 +33,12 @@ async function deeplTranslate(key, texts, source, target) {
   if (src) params.append('source_lang', src);
   const resp = await fetch(deeplHost(key) + '/v2/translate', {
     method:  'POST',
-    headers: { 'Authorization': 'DeepL-Auth-Key ' + key.trim(), 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Authorization': 'DeepL-Auth-Key ' + key, 'Content-Type': 'application/x-www-form-urlencoded' },
     body:    params.toString(),
+    // Bound the request: a stalled DeepL connection would otherwise leave the
+    // content-script caller's RPC hanging forever, and the MV3 worker may be
+    // torn down at the idle limit mid-flight with no response ever sent.
+    signal:  AbortSignal.timeout(15000),
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
@@ -52,9 +56,13 @@ async function handleTranslate(payload) {
   const texts = Array.isArray(payload?.texts) ? payload.texts : null;
   if (!texts || !texts.length) return { ok: false, error: 'no-texts' };
   const { mtApiKey } = await chrome.storage.local.get(['mtApiKey']);
-  if (!mtApiKey) return { ok: false, error: 'no-key' };
+  // Strip ALL whitespace (paste artifacts: stray spaces/newlines).  An embedded
+  // newline in the key would otherwise throw "Invalid header value" from fetch
+  // and surface to the user as a confusing 'fetch-failed' rather than 'no-key'.
+  const key = String(mtApiKey || '').replace(/\s+/g, '');
+  if (!key) return { ok: false, error: 'no-key' };
   try {
-    const out = await deeplTranslate(mtApiKey, texts, payload.source || '', payload.target || 'ja-JP');
+    const out = await deeplTranslate(key, texts, payload.source || '', payload.target || 'ja-JP');
     if (out.ok && out.translations.length !== texts.length) {
       console.warn('[Better Subs] translate count mismatch:', texts.length, '→', out.translations.length);
       return { ok: false, error: 'count-mismatch' };
@@ -62,8 +70,9 @@ async function handleTranslate(payload) {
     if (!out.ok) console.warn('[Better Subs] translate error:', out.error);
     return out;
   } catch (e) {
+    const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
     console.warn('[Better Subs] translate fetch threw:', e && e.message);
-    return { ok: false, error: 'fetch-failed: ' + (e && e.message) };
+    return { ok: false, error: timedOut ? 'timeout' : 'fetch-failed: ' + (e && e.message) };
   }
 }
 
@@ -78,6 +87,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // ── Badge updates from content script ─────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!msg || typeof msg !== 'object') return;
   if (msg.type !== MSG.SET_BADGE || !sender.tab?.id) return;
   const tabId = sender.tab.id;
   chrome.action.setBadgeText({ text: msg.active ? 'ON' : '', tabId });
@@ -89,7 +99,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 // so sender.id is implicitly this extension.  Returns true to keep the async
 // sendResponse channel open while the provider fetch is in flight.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type !== MSG.MT_TRANSLATE) return;
+  if (!msg || typeof msg !== 'object' || msg.type !== MSG.MT_TRANSLATE) return;
   handleTranslate(msg.payload).then(sendResponse).catch(e =>
     sendResponse({ ok: false, error: 'handler: ' + (e && e.message) }));
   return true;

@@ -61,6 +61,11 @@ const merged   = mergeSigns(out, secSigns);
 const mergedGap = mergeSigns(buildSignsAss(`[Script Info]\nPlayResY: 360\n[V4+ Styles]\nFormat: Name\nStyle: S\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,S,,0,0,0,,{\\pos(100,300)}A`),
   buildSignsAss(`[Script Info]\nPlayResY: 360\n[V4+ Styles]\nFormat: Name\nStyle: S\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,S,,0,0,0,,{\\pos(100,300)}B`),
   10);  // 10% of 360 = 36 → secondary y 300 → 264
+// A \move sign must be lifted too (both its start AND end y), else a moving
+// secondary sign keeps its original Y and overlaps the primary.
+const mergedMove = mergeSigns(buildSignsAss(`[Script Info]\nPlayResY: 360\n[V4+ Styles]\nFormat: Name\nStyle: S\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,S,,0,0,0,,{\\pos(100,300)}A`),
+  buildSignsAss(`[Script Info]\nPlayResY: 360\n[V4+ Styles]\nFormat: Name\nStyle: S\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,S,,0,0,0,,{\\move(100,300,200,320)}B`),
+  10);  // both y's lifted by 36 → (100,264,200,284)
 
 const checks = {
   'returns a string for .ass with signs':        typeof out === 'string',
@@ -80,6 +85,7 @@ const checks = {
   "merge drops the secondary's plain dialogue":  !/Dialogue ordinaire/.test(merged),
   'merge with a null side returns the other':    mergeSigns(null, secSigns) === secSigns && mergeSigns(out, null) === out,
   'merge gap lifts the secondary \\pos.y':       /\{\\pos\(100,264\)\}B/.test(mergedGap) && /\{\\pos\(100,300\)\}A/.test(mergedGap),
+  'merge gap lifts BOTH \\move y coords':        /\{\\move\(100,264,200,284\)\}B/.test(mergedMove),
 };
 let ok = true;
 for (const [k, v] of Object.entries(checks)) { if (!v) ok = false; console.log((v ? 'PASS' : 'FAIL') + '  ' + k); }

@@ -41,6 +41,14 @@
     return `rgba(${m[1]},${m[2]},${m[3]},${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
   }
 
+  // Parse a numeric style field, falling back to `d` only when the field is
+  // missing/blank/garbage — NOT when it's a legitimate 0.  (`x ?? d` doesn't
+  // work here: parseFloat('') is NaN, and `NaN ?? d` keeps the NaN, which then
+  // leaks into the renderer as `NaNpx`.  `x || d` is also wrong: it would turn
+  // a valid Outline/Shadow/MarginV of 0 into the default.)
+  function numOr(s, d) { const v = parseFloat(s);    return Number.isFinite(v) ? v : d; }
+  function intOr(s, d) { const v = parseInt(s, 10);  return Number.isFinite(v) ? v : d; }
+
   function parseOverrideTags(tagStr) {
     const s = {};
     const posM   = tagStr.match(/\\pos\(([^,)]+),([^)]+)\)/);
@@ -162,10 +170,10 @@
             color:       ch  ? parseColorHex(ch)        : null,
             outlineColor:och ? parseColorHex(och)       : null,
             shadowColor: bch ? parseColorHex(bch)       : null,
-            bord:        parseFloat(f[stOutline])       ?? 2,
-            shad:        parseFloat(f[stShadow])        ?? 0,
+            bord:        numOr(f[stOutline], 2),
+            shad:        numOr(f[stShadow], 0),
             borderStyle: parseInt(f[stBorderStyle])     || 1,
-            marginV:     parseInt(f[stMarginV])         ?? null,
+            marginV:     intOr(f[stMarginV], null),
           };
         }
         continue;
@@ -239,7 +247,16 @@
     const p = ts.trim().split(':');
     if (p.length === 3) return +p[0] * 3600 + +p[1] * 60 + +p[2];
     if (p.length === 2) return +p[0] * 60 + +p[1];
-    return 0;
+    return NaN;
+  }
+
+  // A cue only renders if its span is well-formed: both times finite and the
+  // end strictly after the start.  A malformed timestamp (parseTimestamp → NaN)
+  // or an end ≤ start would otherwise produce a cue that never satisfies the
+  // `end > t` window check (so it silently never shows) or a NaN start that
+  // corrupts the start-sorted binary search in scanCues.
+  function validSpan(start, end) {
+    return Number.isFinite(start) && Number.isFinite(end) && end > start;
   }
 
   function parseWebVTT(text) {
@@ -253,7 +270,7 @@
       const start   = parseTimestamp(startRaw);
       const end     = parseTimestamp(endRaw.trim().split(/\s+/)[0]);
       const cueText = lines.slice(tsIdx + 1).map(l => l.replace(/<[^>]+>/g, '')).join('\n').trim();
-      if (cueText) cues.push({ start, end, text: cueText, ...defaultVttCue() });
+      if (cueText && validSpan(start, end)) cues.push({ start, end, text: cueText, ...defaultVttCue() });
     }
     return cues;
   }
@@ -276,7 +293,7 @@
       const cueText = lines.slice(tsIdx + 1)
         .map(l => l.replace(/\{[^}]*\}/g, '').replace(/<[^>]+>/g, ''))
         .join('\n').trim();
-      if (cueText) cues.push({ start, end, text: cueText, ...defaultVttCue() });
+      if (cueText && validSpan(start, end)) cues.push({ start, end, text: cueText, ...defaultVttCue() });
     }
     return cues;
   }

@@ -96,7 +96,15 @@
       const m = a.match(/PlayResY:\s*(\d+)/i);
       const dy = Math.round((gapPct / 100) * (m ? Number(m[1]) : 360));
       if (dy) bDialogue = bDialogue.map(l =>
-        l.replace(/(\\pos\(\s*[^,]+,\s*)(-?[\d.]+)(\s*\))/gi, (_, pre, y, post) => pre + (Number(y) - dy) + post));
+        l
+          // \pos(x, y) → lift y
+          .replace(/(\\pos\(\s*[^,]+,\s*)(-?[\d.]+)(\s*\))/gi,
+            (_, pre, y, post) => pre + (Number(y) - dy) + post)
+          // \move(x1, y1, x2, y2[, t1, t2]) → lift both y1 and y2, else a moving
+          // sign keeps its original Y and overlaps track A (the exact collision
+          // the gap exists to prevent).
+          .replace(/(\\move\(\s*[^,]+,\s*)(-?[\d.]+)(\s*,\s*[^,]+,\s*)(-?[\d.]+)(\s*(?:,[^)]*)?\))/gi,
+            (_, p1, y1, p3, y2, p5) => p1 + (Number(y1) - dy) + p3 + (Number(y2) - dy) + p5));
     }
     return a.replace(/\r/g, '').replace(/\s+$/, '') + '\n' + bDialogue.join('\n') + '\n';
   }

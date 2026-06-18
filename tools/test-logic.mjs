@@ -87,6 +87,35 @@ section('Parsers');
               'Dialogue: 0:00:02.00,0:00:04.00,Default,Hi there\n';
   const a = P.parseSubtitles(ass, 'x.ass');
   eq('ASS parses', [a.length, a[0].text], [1, 'Hi there']);
+
+  // Numeric style fields: a legitimate 0 must survive (no outline / no margin),
+  // and a blank/garbage field must fall back to its default — NOT become NaN
+  // (which would render as `NaNpx` stroke/margin in the overlay).
+  const fmt = 'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, ' +
+              'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, ' +
+              'Shadow, Alignment, MarginL, MarginR, MarginV, Encoding';
+  const styleAss = ['[Script Info]', '[V4+ Styles]', fmt,
+    'Style: Zero,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,10,10,0,1',
+    'Style: Blank,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,,,2,10,10,,1',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Dialogue: 0,0:00:01.00,0:00:03.00,Zero,,0,0,0,,zero outline',
+    'Dialogue: 0,0:00:04.00,0:00:06.00,Blank,,0,0,0,,blank outline'].join('\n');
+  const sa = P.parseSubtitles(styleAss, 'x.ass');
+  eq('ASS Outline/Shadow=0 preserved (not defaulted)', [sa[0].bord, sa[0].shad], [0, 0]);
+  ok('ASS MarginV=0 preserved (not null)', sa[0].marginV === 0);
+  ok('ASS blank Outline → default 2, not NaN', sa[1].bord === 2 && Number.isFinite(sa[1].bord));
+  ok('ASS blank Shadow → default 0, not NaN', sa[1].shad === 0 && Number.isFinite(sa[1].shad));
+  ok('ASS blank MarginV → null, not NaN', sa[1].marginV === null);
+
+  // Malformed / zero-length spans are dropped: an end ≤ start cue never satisfies
+  // the `end > t` window (silently invisible), and a NaN start corrupts the sort.
+  const spanSrt = '1\n00:00:01,000 --> 00:00:01,000\nzero-span\n\n' +
+                  '2\n00:00:02,000 --> 00:00:05,000\nkept\n\n' +
+                  '3\nbad --> stamps\ngarbage\n';
+  const ss = P.parseSubtitles(spanSrt, 'x.srt');
+  eq('zero-span + malformed cues dropped', ss.length, 1);
+  eq('valid cue survives the span filter', ss[0].text, 'kept');
 }
 
 // ── 2. Custom-source registry + persistence ────────────────────────────────
