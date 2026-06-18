@@ -2395,7 +2395,12 @@
       if (url) currentEp()?.setCachedSrcUrl(guid, targetLocale, url);
       return { url, fetchFailed: false, rateLimited: false };
     } catch (e) {
-      log.warn(`${targetLocale} session fetch threw: ${e && e.message}`);
+      // A bare "Failed to fetch" during a background probe is benign and common
+      // (ad blockers, a declined/rate-limited session, CORS) — log it at info so
+      // it doesn't read as a warning; reserve warn for a genuinely unexpected
+      // throw.  Either way the caller gets fetchFailed and the sweep continues.
+      const benignNet = e instanceof TypeError && /failed to fetch/i.test((e && e.message) || '');
+      (benignNet ? log.info : log.warn)(`${targetLocale} session fetch ${benignNet ? 'unavailable' : 'threw'}: ${e && e.message}`);
       return { url: null, fetchFailed: true, rateLimited: false };
     }
   }
