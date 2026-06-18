@@ -209,8 +209,15 @@
     function signedUrlTtl(...urls) {
       let exp = Infinity;
       for (const u of urls) {
-        const m = u && /[?&~=]exp=(\d{9,12})/.exec(u);
-        if (m) exp = Math.min(exp, parseInt(m[1], 10) * 1000);
+        const m = u && /[?&~=]exp=(\d{9,})/.exec(u);
+        if (m) {
+          // CR currently emits a 10-digit unix-seconds expiry; tolerate a longer
+          // or millisecond token without mis-scaling a far-future expiry (which
+          // would defeat the TTL cap and let a 410-expired URL cache-hit later).
+          let ms = parseInt(m[1], 10);
+          if (ms < 1e12) ms *= 1000;   // seconds → ms; values ≥ 1e12 are already ms
+          exp = Math.min(exp, ms);
+        }
       }
       return exp === Infinity ? CACHE_TTL : Math.max(0, Math.min(CACHE_TTL, exp - Date.now()));
     }

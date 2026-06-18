@@ -58,10 +58,16 @@
     let outsideHandler = null;
     let escapeHandler  = null;
     let secondaryMode  = false;  // the menu is showing the "Second subtitle" picker
+    let pendingBind    = null;   // setTimeout id for the deferred document-listener bind
+    let positionedTarget = null; // CR container we flipped to position:relative (to revert)
 
     function close() {
       secondaryMode = false;  // next open starts on the main source list
       document.getElementById(MENU_ID)?.remove();
+      // Cancel a not-yet-fired deferred bind, else it would attach the outside/
+      // Escape listeners to `document` AFTER the menu is gone — orphaned, since
+      // close() already cleared the handler refs it would remove.
+      if (pendingBind) { clearTimeout(pendingBind); pendingBind = null; }
       if (outsideHandler) {
         document.removeEventListener('click', outsideHandler, true);
         outsideHandler = null;
@@ -70,6 +76,10 @@
         document.removeEventListener('keydown', escapeHandler);
         escapeHandler = null;
       }
+      // Restore the player container's positioning we changed on open, so we
+      // don't permanently mutate CR's layout (which can shift its own
+      // absolutely-positioned controls).
+      if (positionedTarget) { positionedTarget.style.position = ''; positionedTarget = null; }
     }
 
     // true/false/null availability for a locale.  ja-JP is owned by the
@@ -503,6 +513,7 @@
       const inPlayer    = mountTarget !== document.body;
       if (inPlayer && window.getComputedStyle(mountTarget).position === 'static') {
         mountTarget.style.position = 'relative';
+        positionedTarget = mountTarget;   // revert on close()
       }
       mountTarget.appendChild(menu);
 
@@ -526,7 +537,8 @@
         if (!menu.contains(e.target) && e.target !== menuBtn) close();
       };
       escapeHandler = (e) => { if (e.key === 'Escape') close(); };
-      setTimeout(() => {
+      pendingBind = setTimeout(() => {
+        pendingBind = null;
         document.addEventListener('click',   outsideHandler, true);
         document.addEventListener('keydown', escapeHandler);
       }, 0);

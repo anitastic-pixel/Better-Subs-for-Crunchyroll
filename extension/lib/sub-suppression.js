@@ -144,6 +144,10 @@
       clearInterval(pollTimer);
       pollTimer = setInterval(() => {
         if (!active) { clearInterval(pollTimer); pollTimer = null; return; }
+        // If the player container wasn't in the DOM at activate() time, the
+        // event-driven observer never attached — retry here (self-guards on the
+        // existing observer) so we don't fall back to poll-only forever.
+        startObserver();
         if (!document.getElementById(SUPPRESS_ID)) injectCSS();
         applyOnce();
       }, 300);
