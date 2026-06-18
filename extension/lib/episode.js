@@ -62,9 +62,26 @@
   const ANCHOR_TTL              = 30 * 24 * 60 * 60 * 1000;
   const CUSTOM_TTL              = 30 * 24 * 60 * 60 * 1000;
 
-  // Bounded backwards scan in cuesAt.  100 covers any realistic cue duration
-  // even in dense typeset files.
-  const MAX_SCAN = 100;
+  // scanCues binary-searches for the last cue that has STARTED, then walks
+  // backwards collecting cues still on screen (end > t).  A long-running cue (a
+  // whole-scene \pos sign, a song-lyric or credits line) can start far earlier
+  // than the current line, so a fixed-count backward cap silently drops it.
+  // Instead we terminate on a prefix-max of `end`: prefixMaxEnd(cues)[i] is the
+  // largest end-time among cues[0..i], so once that maximum is ≤ t no earlier
+  // cue can still be open and the scan can stop — correctly and usually after
+  // only a few steps.  Memoized per cue array (arrays are replaced wholesale on
+  // any change, so the WeakMap entry is GC'd with the old array — no staleness,
+  // no leak).
+  const _prefixMaxEnd = new WeakMap();
+  function prefixMaxEnd(cues) {
+    let arr = _prefixMaxEnd.get(cues);
+    if (arr) return arr;
+    arr = new Array(cues.length);
+    let m = -Infinity;
+    for (let i = 0; i < cues.length; i++) { if (cues[i].end > m) m = cues[i].end; arr[i] = m; }
+    _prefixMaxEnd.set(cues, arr);
+    return arr;
+  }
 
   function createEpisode(guid) {
     // The Catalog owns validation state and reaches storage through these
@@ -147,8 +164,10 @@
         else hi = mid - 1;
       }
       if (right < 0) return [];
+      const pmax = prefixMaxEnd(cues);
       const result = [];
-      for (let i = right; i >= 0 && (right - i) < MAX_SCAN; i--) {
+      for (let i = right; i >= 0; i--) {
+        if (pmax[i] <= t) break;          // no cue in [0..i] can still be open
         if (cues[i].end > t) result.push(cues[i]);
       }
       result.reverse();

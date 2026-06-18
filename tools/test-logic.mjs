@@ -158,6 +158,23 @@ section('Dual subtitles (secondary track)');
   eq('cleared secondary returns nothing', ep.secondaryCuesAt(2, 0).length, 0);
 }
 
+// ── 2c. Long-running cue scan (no fixed backward cap) ────────────────────────
+section('Long-cue scan');
+{
+  globalThis.localStorage = mkStore();
+  const ep = E.create('guidLong');
+  // A whole-scene \pos sign that opens at t=0 and stays up, followed by 200
+  // short dialogue lines.  At t=150 the sign starts ~150 cues earlier than the
+  // current line — the old fixed 100-cue backward cap dropped it.
+  const cues = [{ start: 0, end: 10000, text: 'WHOLE-SCENE SIGN', pos: { x: 1, y: 1 } }];
+  for (let i = 1; i <= 200; i++) cues.push({ start: i, end: i + 0.5, text: 'd' + i });
+  ep.setOriginalCues(cues);
+  const at = ep.cuesAt(150.2, 0).map((c) => c.text);
+  ok('long-running cue still shown 150 lines later', at.includes('WHOLE-SCENE SIGN'));
+  ok('current short line shown too', at.includes('d150'));
+  eq('nothing stale from far in the past', at.includes('d10'), false);
+}
+
 // ── 3. Sync transforms — subSync owns the model, the panel just wires it ─────
 section('Sync transforms (lib/sub-sync.js)');
 {

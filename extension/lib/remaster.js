@@ -109,7 +109,13 @@
       if (anchors[mid].srcTime <= t) lo = mid; else hi = mid;
     }
     const prev = anchors[lo], next = anchors[hi];
-    const frac = (t - prev.srcTime) / (next.srcTime - prev.srcTime);
+    const span = next.srcTime - prev.srcTime;
+    // Two anchors sharing a srcTime would divide by zero → Infinity/NaN times,
+    // which silently break every interior cue.  buildAnchorMap dedupes its own
+    // output, but the manual Custom-source 'anchors' sync path feeds user marks
+    // straight in, so guard here at the source.
+    if (span === 0) return prev.refTime;
+    const frac = (t - prev.srcTime) / span;
     return prev.refTime + frac * (next.refTime - prev.refTime);
   }
 
