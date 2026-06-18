@@ -486,6 +486,33 @@
       line-height: 1.4;
     }
     .app-footer .kbd-hint { color: #777; }
+
+    /* ── Support call-to-action ──
+       Lives outside every <details> so it's always on screen, not buried
+       in a collapsed section.  A little bigger than footer text, with the
+       coffee accent, so it reads as a friendly button rather than fine print. */
+    .coffee-cta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 14px;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--coffee);
+      background: rgba(217,169,62,0.08);
+      border: 1px solid rgba(217,169,62,0.35);
+      border-radius: var(--radius-sm);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .coffee-cta:hover {
+      background: rgba(217,169,62,0.16);
+      border-color: rgba(217,169,62,0.65);
+      color: #f0c25a;
+    }
+
     kbd {
       background: #222;
       border: 1px solid #444;
@@ -991,11 +1018,13 @@
       <div class="row-sub center" style="margin-top:4px;">
         <a id="reportGithub" href="#" class="link" style="color:#777;">…or open a GitHub issue instead</a>
       </div>
-      <div class="row-sub center" style="margin-top:10px;">
-        <a class="link plain" href="https://buymeacoffee.com/ani_" target="_blank" rel="noopener noreferrer" style="color:var(--coffee);">☕ Enjoying it? Buy me a coffee</a>
-      </div>
     </div>
   </details>
+
+  <!-- Support — always visible, never tucked inside a collapsed section -->
+  <a class="coffee-cta" href="https://buymeacoffee.com/ani_" target="_blank" rel="noopener noreferrer">
+    ☕ Enjoying it? Buy me a coffee
+  </a>
 
   <footer class="app-footer">
     <span>Reload the episode tab after toggling the extension.</span>
