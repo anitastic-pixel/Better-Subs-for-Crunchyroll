@@ -66,7 +66,25 @@
     let videoEl  = null;
     let overlayEl = null;
     let lastCueKey = '';
+    // Memo for the style-context portion of the cache key: the caller hands back
+    // the SAME styleCtx object reference until settings change, so we stringify
+    // it only when the reference actually changes — not on every frame.
+    let ctxMemoRef = null, ctxMemoStr = '';
     let resizeHandler = null;
+
+    // Per-render cache of the localStorage tuning reads below.  signTune() alone
+    // is read 3× per positioned sign; on a scene with many \pos signs that's
+    // dozens of synchronous localStorage hits per repaint.  render() resets this
+    // to {} at the top of each repaint, so the values are read at most once per
+    // key per frame and still pick up live tuning-slider changes next frame.
+    let _lsFrame = null;
+    function lsNum(key) {
+      if (_lsFrame && key in _lsFrame) return _lsFrame[key];
+      let v = NaN;
+      try { v = parseFloat(localStorage.getItem(key)); } catch (_) {}
+      if (_lsFrame) _lsFrame[key] = v;
+      return v;
+    }
 
     // Typeset (\pos) signs pass trueSize=true: they render near the EXACT ASS
     // size (no readability fudge, no user size slider) so they match the video's
@@ -74,7 +92,7 @@
     // sign factor (default 0.9, crSubFixDebug.signScale(x)) trims it.  Dialogue
     // keeps the 0.65 readability factor and the user's size preference.
     function signScale() {
-      try { const v = parseFloat(localStorage.getItem('crSubFix_signscale')); if (v > 0 && v <= 2) return v; } catch (_) {}
+      const v = lsNum('crSubFix_signscale'); if (v > 0 && v <= 2) return v;
       return 0.9;
     }
     // CSS perspective distance (px) for \frx/\fry 3-D rotation.  Scales with the
@@ -82,13 +100,13 @@
     // length must scale with the video) — default ≈ 1× video height.  A
     // localStorage override (the tuning slider) wins, for display-specific dial-in.
     function signPersp(boxH) {
-      try { const v = parseFloat(localStorage.getItem('crSubFix_persp')); if (v > 0) return v; } catch (_) {}
+      const v = lsNum('crSubFix_persp'); if (v > 0) return v;
       return Math.round((boxH || 1018) * 1.0);
     }
     // Live tuning multipliers on the file's transform values (1 = faithful),
     // driven by the in-player Typeset-tuning sliders (localStorage crSubFix_ts_*).
     function signTune(key, def) {
-      try { const v = parseFloat(localStorage.getItem('crSubFix_ts_' + key)); if (v >= 0) return v; } catch (_) {}
+      const v = lsNum('crSubFix_ts_' + key); if (v >= 0) return v;
       return def;
     }
     function calcFontSize(cue, vw, vh, trueSize) {
@@ -502,10 +520,15 @@
       // the cache and repaints; JSON.stringify of the flat literals is deterministic.
       const cueKey = cues.map(c => `${c.start}:${c.end}`).join('|');
       const secKey = hasSecondary ? secondaryCues.map(c => `${c.start}:${c.end}`).join('|') : '';
-      const ctxKey = styleCtx ? JSON.stringify(styleCtx) : '';
+      let ctxKey = '';
+      if (styleCtx) {
+        if (styleCtx === ctxMemoRef) ctxKey = ctxMemoStr;
+        else { ctxKey = JSON.stringify(styleCtx); ctxMemoRef = styleCtx; ctxMemoStr = ctxKey; }
+      }
       const key = `${ctxKey}||${cueKey}||S:${secKey}`;
       if (key === lastCueKey) return;
       lastCueKey = key;
+      _lsFrame = {};   // fresh per-repaint cache for the localStorage tuning reads
 
       reposition();
       // Map cues to the actual displayed video content (handles letterbox /

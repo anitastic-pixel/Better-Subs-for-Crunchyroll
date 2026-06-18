@@ -327,11 +327,42 @@ const STYLE_KEYS = [
   'overrideBgGlassBlur', 'overrideBgGlassSat', 'overrideBgGlassHue',
 ];
 let styleTarget = 'dialogue';   // 'dialogue' | 'signs'
-function setStyle(obj, cb) {
-  if (styleTarget !== 'signs') { chrome.storage.local.set(obj, cb); return; }
+
+// ── Coalesced setting writes ────────────────────────────────────────────────
+// Slider `input` fires dozens of times/sec during a drag, and every write
+// crosses into chrome.storage → the page's storage.onChanged → a live
+// re-render.  Writing on every pixel floods that pipeline.  Instead the
+// handlers update their label/preview synchronously (instant feedback) but
+// route the actual write through queueSet(), which merges rapid writes and
+// flushes them on a trailing timer.  Discrete actions (presets, with a cb)
+// write immediately, flushing any pending drag first so a stale queued value
+// can't clobber them afterwards.
+let _pending = null, _pendingTimer = null;
+function flushPending() {
+  if (_pendingTimer) { clearTimeout(_pendingTimer); _pendingTimer = null; }
+  if (!_pending) return;
+  const obj = _pending; _pending = null;
+  chrome.storage.local.set(obj);
+}
+function queueSet(obj) {
+  _pending = Object.assign(_pending || {}, obj);
+  if (_pendingTimer) clearTimeout(_pendingTimer);
+  _pendingTimer = setTimeout(flushPending, 120);
+}
+// Don't lose the last drag value if the popup closes within the debounce window.
+window.addEventListener('pagehide', flushPending);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushPending(); });
+
+function projectStyle(obj) {
+  if (styleTarget !== 'signs') return obj;
   const out = {};
   for (const k in obj) out[STYLE_KEYS.includes(k) ? 'sign_' + k : k] = obj[k];
-  chrome.storage.local.set(out, cb);
+  return out;
+}
+function setStyle(obj, cb) {
+  const out = projectStyle(obj);
+  if (cb) { flushPending(); chrome.storage.local.set(out, cb); }
+  else queueSet(out);
 }
 function styleProfile(s) {
   if (styleTarget !== 'signs') return s;
@@ -512,13 +543,13 @@ toggleIncludeDiag.addEventListener('change', () => {
 scaleSlider.addEventListener('input', () => {
   const pct = parseInt(scaleSlider.value);
   scaleLabel.textContent = `${pct}%`;
-  chrome.storage.local.set({ subScale: pct / 100 });
+  queueSet({ subScale: pct / 100 });
 });
 
 signScaleSlider.addEventListener('input', () => {
   const pct = parseInt(signScaleSlider.value);
   signScaleLabel.textContent = `${pct}%`;
-  chrome.storage.local.set({ sign_textScale: pct / 100 });   // signs-only key
+  queueSet({ sign_textScale: pct / 100 });   // signs-only key
 });
 
 // ── Sync offset ───────────────────────────────────────────────────────────
@@ -555,13 +586,13 @@ offsetReset.addEventListener('click', () => {
 subBottomFloor.addEventListener('input', () => {
   const v = parseInt(subBottomFloor.value);
   subBottomFloorLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ subBottomFloor: v });
+  queueSet({ subBottomFloor: v });
 });
 
 secSignGap?.addEventListener('input', () => {
   const v = parseInt(secSignGap.value);
   secSignGapLabel.textContent = `${v}%`;
-  chrome.storage.local.set({ secondarySignGap: v });
+  queueSet({ secondarySignGap: v });
 });
 
 // ── Style override controls ───────────────────────────────────────────────

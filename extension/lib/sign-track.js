@@ -33,7 +33,22 @@
   // Strip a raw .ass down to its typeset signs: keep everything before [Events]
   // ([Script Info]/[V4+ Styles]/[Fonts], so embedded fonts survive to libass),
   // the Events Format line, and only the \pos/\move Dialogue lines.
+  //
+  // Memoized on the raw string: the caller re-runs this on every settings change
+  // and every sign push, almost always with the SAME raw .ass (a style-slider
+  // drag doesn't change the subtitle file).  Reparsing a multi-KB file
+  // line-by-line each time is pure waste; a tiny LRU-ish cache (primary +
+  // secondary + slack) collapses it to one parse.  Pure → safe to cache.
+  const _cache = new Map();
   function buildSignsAss(raw) {
+    if (raw == null) return null;
+    if (_cache.has(raw)) return _cache.get(raw);
+    const out = buildSignsAssUncached(raw);
+    if (_cache.size >= 6) _cache.delete(_cache.keys().next().value);
+    _cache.set(raw, out);
+    return out;
+  }
+  function buildSignsAssUncached(raw) {
     if (!raw || !/\[Events\]/i.test(raw)) return null;
     const lines = raw.replace(/\r/g, '').split('\n');
     const out = []; let inEvents = false, hasSign = false;

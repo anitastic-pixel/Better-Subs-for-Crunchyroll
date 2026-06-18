@@ -2079,6 +2079,7 @@
   // style/size.
   new MutationObserver(() => {
     renderer.invalidate();
+    invalidateStyleCtx();   // a data-cr-* attribute changed → rebuild the cached style context
     // Re-push the libass sign layer too, so sign-affecting settings (e.g. the
     // dual-sign gap in 'both' mode) take effect live; content.js dedupes an
     // unchanged .ass, so this is a no-op when nothing sign-relevant changed.
@@ -2667,14 +2668,19 @@
   // Paint once now, then re-render a few times over the next ~half
   // second so any in-flight attribute writes land before the user
   // notices.  Each retry is cheap: invalidate + capture + render.
+  let _catchupTimers = [];
   function paintWithSettingsCatchup() {
+    // Cancel any in-flight catch-up first: rapid dub/source switches would
+    // otherwise stack multiple 8-pass bursts, each forcing full repaints.
+    _catchupTimers.forEach(clearTimeout);
+    invalidateStyleCtx();   // this burst's whole point is to re-read late attribute writes
     onTimeUpdate();
     // Retries extended to 2.5s with more intermediate points — covers
     // slow cold-start storage roundtrips that the previous 500ms ceiling
-    // could miss.  Each pass is cheap (attribute reads + SVG element
-    // creation for the visible cues).
-    [16, 80, 200, 400, 700, 1100, 1700, 2500].forEach(delay => setTimeout(() => {
-      if (overlayActive) { renderer.invalidate(); onTimeUpdate(); }
+    // could miss.  Each pass re-reads attributes (invalidateStyleCtx) so a
+    // late write lands, then repaints the visible cues.
+    _catchupTimers = [16, 80, 200, 400, 700, 1100, 1700, 2500].map(delay => setTimeout(() => {
+      if (overlayActive) { renderer.invalidate(); invalidateStyleCtx(); onTimeUpdate(); }
     }, delay));
   }
 
@@ -2856,7 +2862,19 @@
   }
   // Both profiles, threaded to the renderer each frame: dialogue cues use
   // .dialogue, \pos typeset signs use .signs.
-  const captureStyleCtxs = () => ({ dialogue: captureStyleCtx(''), signs: captureStyleCtx('sign_') });
+  //
+  // Memoized: captureStyleCtx does ~20 data-attribute reads/parses per profile,
+  // but the result only changes when a data-cr-* attribute changes — which the
+  // settings MutationObserver below already watches.  So build the context once
+  // and hand back the SAME object until invalidateStyleCtx() is called, rather
+  // than re-reading the DOM on every timeupdate (~4-10×/sec) BEFORE the
+  // renderer's cue-key cache has even decided whether to repaint.  Returning a
+  // stable reference also lets the renderer skip re-stringifying it (see its
+  // ctxKey memo).
+  let _styleCtxCache = null;
+  const invalidateStyleCtx = () => { _styleCtxCache = null; };
+  const captureStyleCtxs = () =>
+    _styleCtxCache || (_styleCtxCache = { dialogue: captureStyleCtx(''), signs: captureStyleCtx('sign_') });
 
   // ── Native subtitle suppression ────────────────────────────────────────────
   // The four-layer strategy that hides Crunchyroll's own subtitle renderer while
