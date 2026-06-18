@@ -290,7 +290,10 @@
       // setTrack only queues the new .ass to the worker; libass repaints only on
       // a video time change — so nudge it to render NOW, otherwise the signs don't
       // update until the next scrub/play (i.e. nothing happens while paused).
-      try { octopus.setCurrentTime(octopusVideo.currentTime); } catch (_) {}
+      // octopusVideo can be null during a teardown race; fall back to the live
+      // element so the repaint nudge (the whole point of this line) still fires.
+      const vEl = octopusVideo || document.querySelector('video');
+      try { if (vEl) octopus.setCurrentTime(vEl.currentTime); } catch (_) {}
     } catch (_) { destroyOctopus(); setOctopusAss(ass); }
   }
 
@@ -358,7 +361,9 @@
         workerUrl,
         ...fontOpts,            // fallbackFont (+ availableFonts for the "Original" mapping)
         onError: (e) => console.warn('[CR Sub Fix] octopus error', e),
-        onReady: () => { dlog('[CR Sub Fix] libass ready ✓'); try { octopus && octopus.setCurrentTime(v.currentTime); } catch (_) {} },
+        // Ignore the ready callback if a newer push has already superseded this
+        // build — otherwise a stale instance nudges a frame it no longer owns.
+        onReady: () => { if (seq !== octopusSeq) return; dlog('[CR Sub Fix] libass ready ✓'); try { octopus && octopus.setCurrentTime(v.currentTime); } catch (_) {} },
       });
     } catch (e) {
       if (!isCtxDead(e)) console.warn('[CR Sub Fix] octopus init failed', e);

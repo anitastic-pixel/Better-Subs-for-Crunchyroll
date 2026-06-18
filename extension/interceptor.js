@@ -1529,7 +1529,7 @@
         ep?.setCachedRawText(url, text);
       } catch (_) { return []; }
     }
-    return parseSubtitles(text, url);
+    try { return parseSubtitles(text, url); } catch (_) { return []; }
   }
 
   // ── Remaster progress HUD ─────────────────────────────────────────────────
@@ -2364,30 +2364,40 @@
       return { url: cached.url, fetchFailed: false, rateLimited: false };
     }
 
-    const resp = await originalFetch(
-      `https://www.crunchyroll.com/playback/v3/${guid}/web/chrome/play`,
-      { credentials: 'include', headers: authHeaders }
-    );
+    // A network/CORS error or a malformed JSON body would REJECT here.  Callers
+    // (e.g. the wrong-title validation sweep) await this in a Promise.all and
+    // rely on the documented { url, fetchFailed, rateLimited } shape, so a
+    // throw would abort validation for every other locale.  Map any throw to a
+    // soft fetchFailed instead.
+    try {
+      const resp = await originalFetch(
+        `https://www.crunchyroll.com/playback/v3/${guid}/web/chrome/play`,
+        { credentials: 'include', headers: authHeaders }
+      );
 
-    if (!resp.ok) {
-      const rateLimited = resp.status === 429 || resp.status === 420;
-      log.warn(`${targetLocale} session fetch failed (${resp.status}).`);
-      return { url: null, fetchFailed: true, rateLimited };
+      if (!resp.ok) {
+        const rateLimited = resp.status === 429 || resp.status === 420;
+        log.warn(`${targetLocale} session fetch failed (${resp.status}).`);
+        return { url: null, fetchFailed: true, rateLimited };
+      }
+
+      const data = await resp.json();
+      if (data.token) releaseSession(guid, data.token, authHeaders);
+
+      const sessionSubs = PLAYBACK.subtitleMap(data);
+
+      // Store the complete row in the catalog indexed by this session's audio locale.
+      const sessionAudio = data.audioLocale ?? targetLocale;
+      storeSessionSubs(sessionAudio, sessionSubs);
+      log.info(`${sessionAudio} session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
+
+      const url = sessionSubs[targetLocale] ?? null;
+      if (url) currentEp()?.setCachedSrcUrl(guid, targetLocale, url);
+      return { url, fetchFailed: false, rateLimited: false };
+    } catch (e) {
+      log.warn(`${targetLocale} session fetch threw: ${e && e.message}`);
+      return { url: null, fetchFailed: true, rateLimited: false };
     }
-
-    const data = await resp.json();
-    if (data.token) releaseSession(guid, data.token, authHeaders);
-
-    const sessionSubs = PLAYBACK.subtitleMap(data);
-
-    // Store the complete row in the catalog indexed by this session's audio locale.
-    const sessionAudio = data.audioLocale ?? targetLocale;
-    storeSessionSubs(sessionAudio, sessionSubs);
-    log.info(`${sessionAudio} session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
-
-    const url = sessionSubs[targetLocale] ?? null;
-    if (url) currentEp()?.setCachedSrcUrl(guid, targetLocale, url);
-    return { url, fetchFailed: false, rateLimited: false };
   }
 
   // ── DASH manifest swap ─────────────────────────────────────────────────────
@@ -2519,6 +2529,12 @@
   // primary source changes.  Cheap no-op once in the desired state.  A secondary
   // equal to the active primary is dropped (no duplicate band).
   let _secState = { guid: null, want: null, primary: null };
+  // Bounded-retry guard for the async secondary fetch.  _secState is committed
+  // synchronously (so we never run two fetches for the same target at once), but
+  // a transient empty/failed fetch must NOT strand the band empty forever — nor
+  // fetch-storm.  On failure we allow a couple of retries on later ticks, then
+  // give up; a success resets it.
+  let _secFail = { key: null, tries: 0 };
   function setSecondaryRaw(raw) {
     _secondaryRawAss   = raw || null;
     _secondaryHasSigns = !!(_secondaryRawAss && buildSignsAss(_secondaryRawAss));
@@ -2544,20 +2560,36 @@
     // A pure primary-source change (same episode, same want) keeps the cues.
     if (prev.guid === ep.guid && prev.want === want && ep.secondaryCues.length) return;
     ep.setSecondaryCues([]);                          // clear stale while loading
+    const reqKey = ep.guid + '|' + want;
+    // Empty/failed fetch: re-open _secState so a later tick retries, but cap the
+    // attempts so a dialogue-only/absent/404 locale converges instead of looping.
+    const retryOrGiveUp = () => {
+      if (_secFail.key === reqKey && _secFail.tries >= 2) return;   // give up — keep _secState committed
+      _secFail = { key: reqKey, tries: (_secFail.key === reqKey ? _secFail.tries : 0) + 1 };
+      _secState = { guid: null, want: null, primary: null };        // re-evaluate next tick
+    };
     fetchCuesForLocale(ep, want).then((r) => {
       if (ep.disposed || currentEp() !== ep) return;
       if (getSecondaryPref() !== want) return;        // changed again mid-fetch
-      ep.setSecondaryCues(r?.cues ?? []);
+      const cues = r?.cues ?? [];
+      if (!cues.length) { ep.setSecondaryCues([]); setSecondaryRaw(null); retryOrGiveUp(); renderer.invalidate(); return; }
+      _secFail = { key: null, tries: 0 };
+      ep.setSecondaryCues(cues);
       setSecondaryRaw(r?.rawText || null);             // for the "Signs" selector
       renderer.invalidate();
       onTimeUpdate();
-    }).catch(() => { if (!ep.disposed) { ep.setSecondaryCues([]); setSecondaryRaw(null); } });
+    }).catch(() => {
+      if (ep.disposed) return;
+      ep.setSecondaryCues([]); setSecondaryRaw(null);
+      retryOrGiveUp();
+    });
   }
   function selectSecondary(locale) {
     setSecondaryPref(locale || '');
     const ep = currentEp();
     if (!ep) return;
     _secState = { guid: null, want: null, primary: null };  // force re-evaluate
+    _secFail  = { key: null, tries: 0 };                    // fresh attempts for an explicit pick
     maybeLoadSecondary(ep);
     renderer.invalidate();
     if (overlayActive) onTimeUpdate();
