@@ -26,6 +26,8 @@
  *     getCancelAction,     // () → { label } | null  (show the cancel row?)
  *     onMtSettings,        // () → void  (open the translation settings panel)
  *     getMtSettingsAction, // () → { label } | null  (show the ⚙ settings row?)
+ *     onApplyLearning,     // (nativeLocale) → void  (set the audio+native stack)
+ *     getLearningInfo,     // () → { audioLocale, audioLabel, audioHasSub, native }
  *   });
  *   menu.injectButton(found, afterBtn)   // adds the ▾ button to controls
  *   menu.removeButton()                  // removes the ▾ button
@@ -54,15 +56,20 @@
     onCancelTranslate, getCancelAction, onMtSettings, getMtSettingsAction,
     onSelectSecondary, getSecondary,
     onSetSignSource, getSignSource, getSecondaryHasSigns,
+    getLayer, onSetLayer,
+    onApplyLearning, getLearningInfo,
   }) {
     let outsideHandler = null;
     let escapeHandler  = null;
-    let secondaryMode  = false;  // the menu is showing the "Second subtitle" picker
+    // Which screen the dropdown is showing: the source picker, or one of the
+    // submenus ('learn' = learning mode / second subtitle, 'show' = per-layer
+    // visibility, 'manage' = the action verbs).  Always reset to 'sources' on close.
+    let view           = 'sources';
     let pendingBind    = null;   // setTimeout id for the deferred document-listener bind
     let positionedTarget = null; // CR container we flipped to position:relative (to revert)
 
     function close() {
-      secondaryMode = false;  // next open starts on the main source list
+      view = 'sources';  // next open starts on the main source list
       document.getElementById(MENU_ID)?.remove();
       // Cancel a not-yet-fired deferred bind, else it would attach the outside/
       // Escape listeners to `document` AFTER the menu is gone — orphaned, since
@@ -97,7 +104,6 @@
     function makeRow(label, isActive, hasContent, onClick, validation, locale) {
       const unavail = hasContent === false;
       const isWrong = validation === 'wrong-title';
-      const isValid = validation === 'ok';
       const row = document.createElement('div');
       if (locale)  row.dataset.locale  = locale;
       if (isActive) row.dataset.active = 'true';
@@ -141,15 +147,10 @@
         tag.textContent = '⚠ wrong title';
         tag.style.cssText = 'font-size:10px;color:#cc9900;margin-left:auto;padding-left:8px;flex-shrink:0;';
         row.appendChild(tag);
-      } else if (isValid || isActive) {
-        // Active row shows "✓ valid" too (it's the working, selected source) so
-        // it isn't the only row without a status.
-        const tag = document.createElement('span');
-        tag.dataset.vtag = '1';
-        tag.textContent = '✓ valid';
-        tag.style.cssText = 'font-size:10px;color:#4caf50;margin-left:auto;padding-left:8px;flex-shrink:0;';
-        row.appendChild(tag);
       }
+      // Valid / active rows carry NO badge — validity is flagged only when
+      // there's a problem (wrong-title / no-subs).  The active row is marked by
+      // its accent colour + leading ✓, so the list stays clean (Concept 4).
       if (!unavail) {
         row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
         row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
@@ -224,7 +225,6 @@
       if (!row) return;
 
       const isWrong  = validation === 'wrong-title';
-      const isValid  = validation === 'ok';
       const isActive = row.dataset.active === 'true';
       const unavail  = row.dataset.unavail === 'true';
 
@@ -245,14 +245,11 @@
       if (isWrong) {
         ensureTag().textContent = '⚠ wrong title';
         tag.style.color = '#cc9900';
-      } else if (isValid || isActive) {
-        ensureTag().textContent = '✓ valid';
-        tag.style.color = '#4caf50';
       } else if (validation === 'no-subs' && !unavail) {
         ensureTag().textContent = 'no subs';
         tag.style.color = '#555';
       } else if (tag) {
-        tag.remove();
+        tag.remove();   // valid / active: no badge (de-noised — Concept 4)
       }
     }
 
@@ -275,6 +272,133 @@
       const d = document.createElement('div');
       d.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
       return d;
+    }
+
+    // ── Concept-4 ("Anchored") building blocks ────────────────────────────────
+    // The main source view pins a current-state header, a primary Learning-mode
+    // call-to-action, a compact tools strip, and Off, so only the language list
+    // scrolls.  These helpers build those pinned pieces.
+
+    // Current state: the active source (accent + ✓) and, on the right, the
+    // episode's audio language — answers "what am I seeing / what's spoken".
+    function makeHeaderRow(activeLabel, audioLabel) {
+      const h = document.createElement('div');
+      Object.assign(h.style, {
+        display: 'flex', alignItems: 'baseline', gap: '8px',
+        padding: '9px 14px', borderBottom: `1px solid ${THEME.panelEdge}`,
+        fontFamily: THEME.font, flexShrink: '0',
+      });
+      const cur = document.createElement('span');
+      if (activeLabel) {
+        cur.textContent = `${activeLabel} ✓`;
+        cur.style.cssText = `font-size:13px;font-weight:700;color:${THEME.accent};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+      } else {
+        cur.textContent = 'Subtitles off';
+        cur.style.cssText = `font-size:13px;font-weight:600;color:${THEME.textMuted};white-space:nowrap;`;
+      }
+      h.appendChild(cur);
+      if (audioLabel) {
+        const aud = document.createElement('span');
+        aud.textContent = `audio · ${audioLabel}`;
+        aud.style.cssText = `font-size:10px;color:${THEME.textMuted};margin-left:auto;white-space:nowrap;flex-shrink:0;`;
+        h.appendChild(aud);
+      }
+      return h;
+    }
+
+    // A two-line row: icon + title + a dim sub-line + chevron.  Used for the
+    // grouped "Second subtitle" options — Learning mode (accentTitle=true, the
+    // recommended "auto" path) sits beside the manual pick.
+    function makeSubtextRow(icon, title, sub, onClick, accentTitle) {
+      const row = document.createElement('div');
+      Object.assign(row.style, {
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '8px 14px', cursor: 'pointer', fontFamily: THEME.font,
+        borderRadius: '3px', flexShrink: '0',
+      });
+      const ic = document.createElement('span');
+      ic.textContent = icon;
+      ic.style.cssText = 'font-size:15px;line-height:1;flex-shrink:0;';
+      const col = document.createElement('span');
+      col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;';
+      const t = document.createElement('span');
+      t.textContent = title;
+      t.style.cssText = `font-size:12.5px;font-weight:${accentTitle ? '700' : '500'};color:${accentTitle ? THEME.accent : THEME.text};white-space:nowrap;`;
+      const s = document.createElement('span');
+      s.textContent = sub;
+      s.style.cssText = `font-size:10px;font-weight:400;color:${THEME.textMuted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+      col.appendChild(t); col.appendChild(s);
+      const ar = document.createElement('span');
+      ar.textContent = '›';
+      ar.style.cssText = `color:${THEME.textDim};font-size:11px;flex-shrink:0;`;
+      row.appendChild(ic); row.appendChild(col); row.appendChild(ar);
+      row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      row.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      return row;
+    }
+
+    // A row of equal-width secondary buttons (Show on screen · Manage).
+    function make2ColRow(items) {
+      const row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', gap: '6px', padding: '8px', flexShrink: '0' });
+      for (const it of items) {
+        const b = document.createElement('div');
+        Object.assign(b.style, {
+          flex: '1', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: '6px', padding: '8px 6px', borderRadius: '6px',
+          background: 'rgba(255,255,255,0.05)', border: `1px solid ${THEME.panelEdge}`,
+          cursor: 'pointer', fontFamily: THEME.font, fontSize: '11px', color: THEME.text, whiteSpace: 'nowrap',
+        });
+        const ic = document.createElement('span'); ic.textContent = it.icon;
+        const lb = document.createElement('span'); lb.textContent = it.label;
+        b.appendChild(ic); b.appendChild(lb);
+        b.addEventListener('mouseenter', () => { b.style.borderColor = THEME.accent; });
+        b.addEventListener('mouseleave', () => { b.style.borderColor = THEME.panelEdge; });
+        b.addEventListener('click', (e) => { e.stopPropagation(); it.onClick(); });
+        row.appendChild(b);
+      }
+      return row;
+    }
+
+    // A row with a label (+ optional sub-label) and a small on/off switch on the
+    // right — used by the "Show on screen" submenu.  The whole row toggles;
+    // onToggle receives the NEW value.  The pill mirrors the popup's switch look
+    // (accent when on, neutral track when off) for a consistent feel.
+    function makeToggleRow(label, isOn, onToggle, sub) {
+      const row = document.createElement('div');
+      Object.assign(row.style, {
+        padding: '7px 14px', cursor: 'pointer', fontFamily: THEME.font,
+        display: 'flex', alignItems: 'center', gap: '10px',
+        borderRadius: '3px', userSelect: 'none',
+      });
+      const txt = document.createElement('div');
+      txt.style.cssText = 'flex:1;min-width:0;';
+      const main = document.createElement('div');
+      main.textContent = label;
+      main.style.cssText = `font-size:13px;color:${THEME.text};white-space:nowrap;`;
+      txt.appendChild(main);
+      if (sub) {
+        const s = document.createElement('div');
+        s.textContent = sub;
+        s.style.cssText = `font-size:10px;color:${THEME.textMuted};margin-top:1px;white-space:nowrap;`;
+        txt.appendChild(s);
+      }
+      const sw = document.createElement('span');
+      sw.style.cssText =
+        'position:relative;width:32px;height:18px;flex-shrink:0;border-radius:18px;transition:background 0.15s;' +
+        `background:${isOn ? THEME.accent : 'rgba(255,255,255,0.18)'};`;
+      const knob = document.createElement('span');
+      knob.style.cssText =
+        'position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform 0.15s;' +
+        `transform:translateX(${isOn ? '14px' : '0'});`;
+      sw.appendChild(knob);
+      row.appendChild(txt);
+      row.appendChild(sw);
+      row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      row.addEventListener('click', (e) => { e.stopPropagation(); onToggle(!isOn); });
+      return row;
     }
 
     // "Signs" selector for dual subtitles: which track draws the typeset signs.
@@ -322,21 +446,92 @@
       return wrap;
     }
 
+    // Is there anything to put in the "Manage sources" submenu?  Load-file is
+    // effectively always offered, so this is true whenever that callback exists;
+    // the per-source verbs (sync/export) and MT actions show contextually inside.
+    function hasManageActions() {
+      return !!(onLoadFile || onTranslate || onMtSettings || onClearMt);
+    }
+
     function buildContent(menuEl) {
       const ep = getEpisode();
       if (!ep) return;
       menuEl.innerHTML = '';
 
-      // ── Secondary-subtitle picker (dual subtitles) ────────────────────────
-      // A submenu so the main list stays compact: pick a second locale shown
-      // alongside the primary, or "Off" for a single track.  The active primary
-      // is excluded (a track can't be its own secondary).
-      if (secondaryMode) {
-        menuEl.appendChild(makeSectionHeader('Second subtitle'));
-        menuEl.appendChild(makeActionRow('‹ Back to sources', () => { secondaryMode = false; buildContent(menuEl); }));
+      // The main source view is a flex column so ONLY the language list scrolls
+      // (the current-state header, the Learning-mode CTA, the tools strip, and
+      // Off all stay pinned).  Submenus scroll as a single block, as before.
+      if (view === 'sources') {
+        menuEl.style.display       = 'flex';
+        menuEl.style.flexDirection = 'column';
+        menuEl.style.overflowY     = 'hidden';
+      } else {
+        menuEl.style.display   = 'block';
+        menuEl.style.overflowY = 'auto';
+      }
+
+      // ── "Show on screen" submenu (per-layer visibility) ───────────────────
+      // Toggle the spoken-line band, the typeset signs, and CR's own subtitles
+      // independently — this is the "what to show or not" control.  A submenu so
+      // the main list stays a clean source picker.
+      if (view === 'show') {
+        menuEl.appendChild(makeSectionHeader('Show on screen'));
+        menuEl.appendChild(makeActionRow('‹ Back to sources', () => { view = 'sources'; buildContent(menuEl); }));
         menuEl.appendChild(makeDivider());
-        const cur     = getSecondary?.() || '';
-        const primary = ep.activeSource() ?? 'ja-JP';
+        const layer  = (name, dflt) => (typeof getLayer === 'function' ? !!getLayer(name) : dflt);
+        const toggle = (name, on) => { onSetLayer?.(name, on); buildContent(menuEl); };
+        menuEl.appendChild(makeToggleRow('Dialogue', layer('dialogue', true),
+          (on) => toggle('dialogue', on), 'Spoken-line subtitles'));
+        menuEl.appendChild(makeToggleRow('Typeset signs', layer('signs', true),
+          (on) => toggle('signs', on), 'On-screen text — signs, titles, captions'));
+        menuEl.appendChild(makeToggleRow('Crunchyroll’s own subtitles', layer('official', false),
+          (on) => toggle('official', on), 'Turn off to hide CR’s built-in subtitles'));
+        return;
+      }
+
+      // ── "Learning mode" submenu — the single dual-subtitle control ────────
+      // Merges what used to be two menus: the one-tap "match my audio + your
+      // language" study setup, the manual second-language picker, and the Signs
+      // (primary / secondary / both) selector.  Adding a second subtitle is
+      // essentially the learning use case, so it all lives here.
+      if (view === 'learn') {
+        const info        = (typeof getLearningInfo === 'function') ? (getLearningInfo() || {}) : {};
+        const audio       = info.audioLocale || '';
+        // Prefer the caller-resolved audio label (it knows ja-JP audio is
+        // "Japanese", not the ja-JP subtitle-row label); fall back to our map.
+        const audioLabel  = info.audioLabel || (audio ? (localeLabels[audio] ?? audio) : '');
+        const audioHasSub = !!info.audioHasSub;
+        const native      = info.native || '';
+        const nativeLabel = localeLabels[native] ?? native;
+        const cur         = getSecondary?.() || '';
+        const primary     = ep.activeSource() ?? 'ja-JP';
+
+        menuEl.appendChild(makeSectionHeader('Learning mode'));
+        menuEl.appendChild(makeActionRow('‹ Back to sources', () => { view = 'sources'; buildContent(menuEl); }));
+        menuEl.appendChild(makeDivider());
+
+        const intro = document.createElement('div');
+        intro.textContent = 'Show two subtitles at once — one matching the audio, one in your language — to read along while you learn.';
+        intro.style.cssText = `padding:2px 14px 8px;font-size:11px;line-height:1.5;color:${THEME.textDim};white-space:normal;max-width:250px;`;
+        menuEl.appendChild(intro);
+
+        // One-tap: set the main subtitle to the audio language + your language
+        // below.  Only offered when it would actually do something.
+        if (onApplyLearning && audio) {
+          if (audioHasSub && audio !== native) {
+            menuEl.appendChild(makeSubtextRow('📚', `Match my audio — ${audioLabel}`,
+              `with ${nativeLabel} below`, () => { close(); onApplyLearning(native); }, true));
+          } else if (!audioHasSub) {
+            const note = document.createElement('div');
+            note.textContent = `No ${audioLabel} subtitles on this episode to match the audio — pick a second language below.`;
+            note.style.cssText = `padding:0 14px 8px;font-size:10px;line-height:1.4;color:${THEME.textMuted};`;
+            menuEl.appendChild(note);
+          }
+        }
+
+        // Manual: choose the second subtitle, kept alongside your current main
+        // one.  The active primary is excluded (a track can't pair with itself).
+        menuEl.appendChild(makeSectionHeader('Second subtitle'));
         menuEl.appendChild(makeRow('Off (single subtitle)', !cur, true, () => {
           close(); onSelectSecondary?.('');
         }, null, null));
@@ -347,8 +542,7 @@
             close(); onSelectSecondary?.(v.locale);
           }, null, null));
         }
-        // Custom sources (uploads / machine translations) are valid secondaries
-        // too — pair, say, a CR primary with a machine-translated second language.
+        // Custom sources (uploads / machine translations) are valid secondaries.
         const secCustoms = (ep.listCustomSources?.() ?? []).filter(c => c.id !== primary);
         if (secCustoms.length) {
           menuEl.appendChild(makeDivider());
@@ -367,7 +561,9 @@
             menuEl.appendChild(note);
           }
         }
-        // Sign-track selector — only meaningful once a secondary is chosen.
+
+        // Signs: which track draws the typeset signs — only meaningful once a
+        // second subtitle is chosen (primary / secondary / both).
         if (cur && onSetSignSource) {
           menuEl.appendChild(makeDivider());
           menuEl.appendChild(makeSignSourceRow(() => buildContent(menuEl)));
@@ -375,113 +571,126 @@
         return;
       }
 
-      menuEl.appendChild(makeSectionHeader('Subtitle Source'));
+      // ── "Manage sources" submenu (the action verbs) ───────────────────────
+      // Load a file, translate, tweak sync, export, clear MT — infrequent, so
+      // they live one level down to keep the source list short.  Shown
+      // contextually (sync/export only for the active custom source, etc.).
+      if (view === 'manage') {
+        menuEl.appendChild(makeSectionHeader('Manage sources'));
+        menuEl.appendChild(makeActionRow('‹ Back to sources', () => { view = 'sources'; buildContent(menuEl); }));
+        menuEl.appendChild(makeDivider());
+        const curLocale    = ep.activeSource() ?? 'ja-JP';
+        const customs      = ep.listCustomSources?.() ?? [];
+        const activeCustom = customs.some(c => c.id === curLocale) && isOverlayActive();
+        if (onLoadFile) {
+          menuEl.appendChild(makeActionRow('＋ Load subtitle file…', () => { close(); onLoadFile(); }));
+        }
+        const translateAction = getTranslateAction?.();
+        if (translateAction && onTranslate) {
+          menuEl.appendChild(makeActionRow(translateAction.label, () => { close(); onTranslate(); }));
+        }
+        const mtSettingsAction = getMtSettingsAction?.();
+        if (mtSettingsAction && onMtSettings) {
+          menuEl.appendChild(makeActionRow(mtSettingsAction.label, () => { close(); onMtSettings(); }));
+        }
+        const cancelAction = getCancelAction?.();
+        if (cancelAction && onCancelTranslate) {
+          menuEl.appendChild(makeActionRow(cancelAction.label, () => { close(); onCancelTranslate(); }));
+        }
+        if (activeCustom && onAdjustSync) {
+          menuEl.appendChild(makeActionRow('⚙ Adjust sync…', () => { close(); onAdjustSync(curLocale); }));
+        }
+        if (activeCustom && onExport) {
+          menuEl.appendChild(makeActionRow('⬇ Export subtitles…', () => { close(); onExport(); }));
+        }
+        const clearMtAction = getClearMtAction?.();
+        if (clearMtAction && onClearMt) {
+          menuEl.appendChild(makeActionRow(clearMtAction.label, () => { close(); onClearMt(); }));
+        }
+        return;
+      }
 
-      const div1 = document.createElement('div');
-      div1.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:0 8px 4px;';
-      menuEl.appendChild(div1);
+      // ── Main list ("Anchored"): current state · primary action · a scrolling
+      //    language list (the ONLY scroll region) · pinned tools · Off ─────────
+      const on        = isOverlayActive();
+      const curLocale = ep.activeSource();
+      const customs   = ep.listCustomSources?.() ?? [];
+      const curCustom = customs.find((c) => c.id === curLocale);
+      const activeLabel = (on && curLocale)
+        ? (curCustom?.label || localeLabels[curLocale] || curLocale)
+        : null;
+      const learnInfo = (typeof getLearningInfo === 'function') ? (getLearningInfo() || {}) : {};
+
+      // (a) Current state — active source + the episode's audio language.
+      menuEl.appendChild(makeHeaderRow(activeLabel, learnInfo.audioLabel || ''));
+
+      // (b) The language list is the ONLY scrolling region, so everything
+      // pinned above/below stays reachable no matter how many locales there are.
+      const langHdr = makeSectionHeader('Language');
+      langHdr.style.flexShrink = '0';
+      menuEl.appendChild(langHdr);
+
+      const list = document.createElement('div');
+      Object.assign(list.style, { flex: '1 1 auto', minHeight: '56px', overflowY: 'auto' });
+      // Thin, subtle scrollbar (modern Chrome honours these as inline props).
+      list.style.scrollbarWidth = 'thin';
+      list.style.scrollbarColor = 'rgba(255,255,255,0.28) transparent';
 
       for (const v of ep.catalog.versions()) {
         const label      = localeLabels[v.locale] ?? v.locale;
-        const curLocale  = ep.activeSource() ?? 'ja-JP';
-        const isActive   = (curLocale === v.locale) && isOverlayActive();
+        const isActive   = on && (curLocale === v.locale);
         const hasContent = localeHasContent(ep, v.locale);
-        // Catalog owns both the version list and per-locale validation status —
-        // no JOIN with a parallel map needed.
+        // Catalog owns both the version list and per-locale validation status.
         const validation = ep.catalog.validation(v.locale);
-        menuEl.appendChild(makeRow(label, isActive, hasContent, () => {
-          close();
-          onSelectLocale?.(v.locale);
+        list.appendChild(makeRow(label, isActive, hasContent, () => {
+          close(); onSelectLocale?.(v.locale);
         }, validation, v.locale));
       }
-
-      // ── Custom sources (uploaded files / machine translation) ─────────────
-      const customs = ep.listCustomSources?.() ?? [];
-      const curLocale2 = ep.activeSource() ?? 'ja-JP';
-      const divC = document.createElement('div');
-      divC.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
-      menuEl.appendChild(divC);
+      // Custom sources (uploads / MT) are selectable languages too — same list.
       for (const cs of customs) {
-        const isActive = (curLocale2 === cs.id) && isOverlayActive();
+        const isActive = on && (curLocale === cs.id);
         const badge    = cs.kind === 'mt' ? 'machine' : 'file';
-        menuEl.appendChild(makeCustomRow(cs.label || cs.id, isActive, badge, () => {
-          close();
-          onSelectCustom?.(cs.id);
+        list.appendChild(makeCustomRow(cs.label || cs.id, isActive, badge, () => {
+          close(); onSelectCustom?.(cs.id);
         }, () => {
-          close();
-          onRemoveCustom?.(cs.id);
+          close(); onRemoveCustom?.(cs.id);
         }));
       }
-      const activeCustom = customs.some(c => c.id === curLocale2) && isOverlayActive();
-      if (activeCustom && onAdjustSync) {
-        menuEl.appendChild(makeActionRow('⚙ Adjust sync…', () => {
-          close();
-          onAdjustSync(curLocale2);
-        }));
-      }
-      if (activeCustom && onExport) {
-        menuEl.appendChild(makeActionRow('⬇ Export subtitles…', () => {
-          close();
-          onExport();
-        }));
-      }
-      const translateAction = getTranslateAction?.();
-      if (translateAction && onTranslate) {
-        menuEl.appendChild(makeActionRow(translateAction.label, () => {
-          close();
-          onTranslate();
-        }));
-      }
-      const mtSettingsAction = getMtSettingsAction?.();
-      if (mtSettingsAction && onMtSettings) {
-        menuEl.appendChild(makeActionRow(mtSettingsAction.label, () => {
-          close();
-          onMtSettings();
-        }));
-      }
-      const cancelAction = getCancelAction?.();
-      if (cancelAction && onCancelTranslate) {
-        menuEl.appendChild(makeActionRow(cancelAction.label, () => {
-          close();
-          onCancelTranslate();
-        }));
-      }
-      const clearMtAction = getClearMtAction?.();
-      if (clearMtAction && onClearMt) {
-        menuEl.appendChild(makeActionRow(clearMtAction.label, () => {
-          close();
-          onClearMt();
-        }));
-      }
-      if (onLoadFile) {
-        menuEl.appendChild(makeActionRow('＋ Load subtitle file…', () => {
-          close();
-          onLoadFile();
-        }));
-      }
+      menuEl.appendChild(list);
 
-      // Dual subtitles: enter the "Second subtitle" submenu.  Shows the current
-      // choice inline so it's discoverable at a glance.
-      if (onSelectSecondary) {
+      // (c) Learning mode — the single dual-subtitle entry.  Its submenu merges
+      // the audio-match one-tap, the manual second-language picker, and the
+      // Signs (primary/secondary/both) selector.  Shows the current 2nd sub.
+      if (onApplyLearning || onSelectSecondary) {
         const cur = getSecondary?.() || '';
-        // A custom-source id (custom:mt:…) isn't in localeLabels — resolve it to
-        // the source's friendly label instead of showing the raw id.
-        const curCustom = (ep.listCustomSources?.() ?? []).find(c => c.id === cur);
-        const secLabel = cur ? (curCustom?.label || localeLabels[cur] || cur) : 'Off';
-        menuEl.appendChild(makeActionRow(`Second subtitle: ${secLabel}  ›`, () => {
-          secondaryMode = true;
-          buildContent(menuEl);
-        }));
+        const secCustom = customs.find((c) => c.id === cur);
+        const secLabel  = cur ? (secCustom?.label || localeLabels[cur] || cur) : '';
+        menuEl.appendChild(makeSubtextRow('📚', 'Learning mode',
+          secLabel ? `Second subtitle: ${secLabel}` : 'Show two subtitles for study',
+          () => { view = 'learn'; buildContent(menuEl); }, true));
       }
 
-      const div2 = document.createElement('div');
-      div2.style.cssText = 'height:1px;background:rgba(255,255,255,0.1);margin:4px 8px;';
-      menuEl.appendChild(div2);
+      // (d) Show on screen + Manage sources — a compact two-up row.
+      const tools = [];
+      if (typeof getLayer === 'function' && typeof onSetLayer === 'function') {
+        tools.push({ icon: '👁', label: 'Show on screen', onClick: () => { view = 'show'; buildContent(menuEl); } });
+      }
+      if (hasManageActions()) {
+        tools.push({ icon: '⚙', label: 'Manage', onClick: () => { view = 'manage'; buildContent(menuEl); } });
+      }
+      if (tools.length) menuEl.appendChild(make2ColRow(tools));
 
-      menuEl.appendChild(makeRow('Off', !isOverlayActive(), true, () => {
-        close();
-        onTurnOff?.();
-      }));
+      // (e) Off.
+      const off = document.createElement('div');
+      Object.assign(off.style, {
+        padding: '9px 14px', cursor: 'pointer', fontFamily: THEME.font, fontSize: '12px',
+        color: THEME.text, borderTop: `1px solid ${THEME.panelEdge}`, textAlign: 'center', flexShrink: '0',
+      });
+      off.textContent = 'Turn subtitles off';
+      off.addEventListener('mouseenter', () => { off.style.background = THEME.rowHover; });
+      off.addEventListener('mouseleave', () => { off.style.background = 'transparent'; });
+      off.addEventListener('click', (e) => { e.stopPropagation(); close(); onTurnOff?.(); });
+      menuEl.appendChild(off);
     }
 
     function open() {

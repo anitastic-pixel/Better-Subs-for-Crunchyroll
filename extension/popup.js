@@ -1,7 +1,11 @@
 // ── Element refs ──────────────────────────────────────────────────────────
 const toggleEnabled       = document.getElementById('toggleEnabled');
 const toggleAuto          = document.getElementById('toggleAuto');
-const toggleHideOfficial  = document.getElementById('toggleHideOfficial');
+// "Show on screen" per-layer visibility.  toggleShowOfficial is the INVERSE of
+// the hideOfficialSubs setting (on = CR's own subs shown).
+const toggleShowDialogue  = document.getElementById('toggleShowDialogue');
+const toggleShowSigns     = document.getElementById('toggleShowSigns');
+const toggleShowOfficial  = document.getElementById('toggleShowOfficial');
 const toggleIncludeDiag   = document.getElementById('toggleIncludeDiag');
 const scaleSlider         = document.getElementById('scaleSlider');
 const scaleLabel          = document.getElementById('scaleLabel');
@@ -166,8 +170,6 @@ const STATUS_DISPLAY = {
   notwatch:        { color: '#555',    pulse: false, text: 'Not on an episode page' },
 };
 
-const statusDetail = document.getElementById('statusDetail');
-
 // Minimal locale-code → friendly name table.  Mirrors the larger map in
 // interceptor.js but only carries the common ones — anything not listed
 // is shown as the raw code (e.g. "tr-TR"), which is still informative.
@@ -187,20 +189,29 @@ function setStatus(key, info) {
   statusDot.classList.toggle('pulse', cfg.pulse);
   statusText.textContent = cfg.text;
 
-  // Detail line under the status pill: source · audio · remaster.  Only
-  // shown when there's something to report (active overlay or non-default
-  // source), keeps the bar clean when nothing's actively playing.
-  const parts = [];
-  if (info) {
-    if (info.source)  parts.push(`Source: ${localeName(info.source)}`);
-    if (info.audio)   parts.push(`Audio: ${localeName(info.audio)}`);
-    if (info.remaster === 'synced') parts.push('Synced');
-  }
-  if (parts.length) {
-    statusDetail.textContent = parts.join(' • ');
-    statusDetail.style.display = '';
+  // Live detail grid: what's showing, the audio language, and remaster sync.
+  // Shown only when there's something active to report; keeps the card clean
+  // when nothing's playing.
+  const grid    = document.getElementById('stGrid');
+  const hint    = document.getElementById('stHint');
+  const showing = info?.source ? localeName(info.source) : null;
+  const audio   = info?.audio  ? localeName(info.audio)  : null;
+  const sync    = info?.remaster === 'synced'  ? 'Synced'
+                : info?.remaster === 'pending' ? 'Adjusting…' : null;
+  if (grid && (showing || audio)) {
+    document.getElementById('stShowing').textContent = showing ?? '—';
+    document.getElementById('stAudio').textContent   = audio ?? '—';
+    document.getElementById('stSync').textContent    = sync ?? '—';
+    grid.classList.remove('hidden');
+    if (hint) hint.style.display = 'none';
   } else {
-    statusDetail.style.display = 'none';
+    if (grid) grid.classList.add('hidden');
+    // Adaptive empty state: point the user at the next step.  (For error /
+    // reload / unavailable the status text already carries the instruction.)
+    let t = '';
+    if (key === 'notwatch')     t = 'Open a Crunchyroll episode to start.';
+    else if (key === S.READY)   t = 'Open the ▾ menu on the player to pick a language.';
+    if (hint) { hint.textContent = t; hint.style.display = t ? '' : 'none'; }
   }
 }
 
@@ -374,7 +385,9 @@ function styleProfile(s) {
 function populateFromSettings(s) {
   toggleEnabled.checked = s.enabled;
   toggleAuto.checked    = s.autoActivate;
-  toggleHideOfficial.checked = s.hideOfficialSubs;
+  toggleShowDialogue.checked = s.showDialogue;
+  toggleShowSigns.checked    = s.showSigns;
+  toggleShowOfficial.checked = !s.hideOfficialSubs;   // inverse: on = CR subs shown
   toggleIncludeDiag.checked  = s.includeDiagnostics;
   if (toggleAutoPause) toggleAutoPause.checked = s.autoPauseLine;
   if (secSignGap) { secSignGap.value = s.secondarySignGap; secSignGapLabel.textContent = `${s.secondarySignGap}%`; }
@@ -528,8 +541,15 @@ toggleEnabled.addEventListener('change', () => {
 toggleAuto.addEventListener('change', () => {
   chrome.storage.local.set({ autoActivate: toggleAuto.checked });
 });
-toggleHideOfficial.addEventListener('change', () => {
-  chrome.storage.local.set({ hideOfficialSubs: toggleHideOfficial.checked });
+toggleShowDialogue.addEventListener('change', () => {
+  chrome.storage.local.set({ showDialogue: toggleShowDialogue.checked });
+});
+toggleShowSigns.addEventListener('change', () => {
+  chrome.storage.local.set({ showSigns: toggleShowSigns.checked });
+});
+toggleShowOfficial.addEventListener('change', () => {
+  // "Show CR's own subtitles" is the inverse of the hideOfficialSubs setting.
+  chrome.storage.local.set({ hideOfficialSubs: !toggleShowOfficial.checked });
 });
 toggleAutoPause?.addEventListener('change', () => {
   chrome.storage.local.set({ autoPauseLine: toggleAutoPause.checked });
@@ -932,9 +952,9 @@ try {
 } catch (_) {}
 
 // ── Remember collapsible sections' open/closed state across popup opens ──────
-// The HTML sets the first-run defaults (Playback open, the rest collapsed); once
-// the user opens or closes a section we honour their choice next time.  UI-only
-// state, so it lives in the popup's own localStorage, not the settings schema.
+// The HTML ships all sections collapsed; once the user opens one (via a launcher
+// tile) we honour their choice next time.  UI-only state, so it lives in the
+// popup's own localStorage, not the settings schema.
 (function persistSectionState() {
   const KEY = 'crSubFix_popupSections';
   let saved = {};
@@ -946,4 +966,38 @@ try {
       try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_) {}
     });
   }
+})();
+
+// ── Section launcher tiles ───────────────────────────────────────────────────
+// A 2×2 tile grid opens one collapsible section at a time (accordion).  The
+// native <summary> headers are hidden (CSS .tiled), so the tiles are the entry
+// points; the active tile is highlighted to show which panel is open.
+(function initSectionTiles() {
+  const tiles = [...document.querySelectorAll('.stile')];
+  if (!tiles.length) return;
+  // Enforce one-at-a-time on load: a saved state from the pre-tiles popup could
+  // have several sections open, which the launcher treats as single-open.
+  const openTiles = tiles.filter((t) => document.getElementById(t.dataset.target)?.open);
+  openTiles.slice(1).forEach((t) => { const d = document.getElementById(t.dataset.target); if (d) d.open = false; });
+  const sync = () => {
+    for (const t of tiles) {
+      const d = document.getElementById(t.dataset.target);
+      t.classList.toggle('active', !!(d && d.open));
+    }
+  };
+  for (const t of tiles) {
+    t.addEventListener('click', () => {
+      const d = document.getElementById(t.dataset.target);
+      if (!d) return;
+      const willOpen = !d.open;
+      for (const other of tiles) {                     // accordion: one at a time
+        const od = document.getElementById(other.dataset.target);
+        if (od && od !== d) od.open = false;
+      }
+      d.open = willOpen;
+      sync();
+      if (willOpen) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+  sync();
 })();

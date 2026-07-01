@@ -68,6 +68,7 @@ Japanese, English, English (UK), Deutsch, Español (Lat), Español (España), Fr
 |---|---|
 | **Enable extension** | Turn the extension on or off |
 | **Auto-enable subtitles** | Activate subtitles automatically when playback starts |
+| **Show on screen** | Toggle dialogue, typeset signs, and Crunchyroll's own subtitles independently |
 | **Subtitle size** | Scale subtitle size (25%–250%) |
 | **Sync offset** | Nudge subtitle timing earlier or later |
 | **Bottom margin** | Distance from the bottom of the video to default-anchored subtitles (0–30% of video height) |
@@ -85,13 +86,15 @@ Click the source label next to the button to open the **source picker** and swit
 | ⚠ wrong title | Crunchyroll has linked the wrong subtitle file to this locale (see Known Issues) |
 | no subs | No subtitle file found for this locale |
 
+The picker also has a **Show on screen ›** submenu — toggle the **dialogue**, the **typeset signs**, and **Crunchyroll's own subtitles** on or off independently (keep the translated signs but hide the dialogue, hide signs you don't need, and so on). The same toggles are in the popup under *Show on screen*.
+
 ### Custom sources — bring your own subtitles
 
-Open the source picker and look for the **Custom** section:
+Uploaded files and machine translations appear in the source picker as their own rows (tagged **file** or **machine**), each with a **✕** to remove it. The actions that create and manage them live one level down, under **Manage sources… ›** in the picker:
 
 - **＋ Load subtitle file…** — pick a local `.ass`, `.ssa`, `.srt`, or `.vtt` file. It's parsed in the browser and added as a custom source; nothing is uploaded anywhere. `.ass` files keep their positioned signs and any embedded fonts.
-- **🌐 Translate** — machine-translate an existing track into another language using your own DeepL key (configure the provider and key in the popup). The translation is added as a custom source labelled **machine** and cached per episode so it never re-spends your quota on a reload.
-- Each custom row has a **✕** to remove it, and — when active — **⚙ Adjust sync…** to align the timing and **⬇ Export…** to save the track out as SRT (machine translations export bilingually, translation over source, for easy proofreading).
+- **🌐 Translate** / **⚙ Translation settings…** — machine-translate an existing track into another language using your own DeepL key (set the provider and key in the popup; pick the target and source track under *Translation settings*). The translation is added as a custom source labelled **machine** and cached per episode so it never re-spends your quota on a reload.
+- **⚙ Adjust sync…** / **⬇ Export…** — shown when a custom source is active: align its timing, or save it out as SRT (machine translations export bilingually, translation over source, for easy proofreading).
 
 Custom sources are remembered per episode. A same-language upload auto-aligns to the video; a cross-language one (e.g. a Japanese fansub over an English track) is aligned with the two-point sync panel — mark the first line, mark the last line, and the timing is fitted between them.
 

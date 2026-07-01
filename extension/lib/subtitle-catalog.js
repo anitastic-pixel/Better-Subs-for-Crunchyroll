@@ -201,7 +201,50 @@
     };
   }
 
+  // ── Learning-mode planning (pure) ───────────────────────────────────────────
+  // The "watch & learn" study layout pairs the SPOKEN language (matched to the
+  // episode's audio) with the viewer's own language, stacked.  The decisions are
+  // pure — given the audio locale, the subtitle locales available on the episode,
+  // and the viewer's chosen language — so they live here (catalog-adjacent) and
+  // are unit-tested, while the DOM/menu wiring stays in interceptor.js.
+
+  // Map a browser UI language (navigator.language, e.g. "it", "pt-BR", "es-MX")
+  // to the closest Crunchyroll subtitle locale we can display.  Only a first
+  // guess for the "your language" picker default — the user can override it.
+  function defaultNativeLocale(navLang) {
+    const ui = String(navLang || '').toLowerCase();
+    const base = ui.split('-')[0];
+    if (base === 'es') return /-(419|mx|ar|co|cl|pe|ve)\b/.test(ui) ? 'es-419' : 'es-ES';
+    if (base === 'pt') return ui.includes('-pt') ? 'pt-PT' : 'pt-BR';
+    if (base === 'en') return ui.includes('-gb') ? 'en-GB' : 'en-US';
+    if (base === 'ar') return 'ar-SA';
+    const MAP = {
+      de: 'de-DE', fr: 'fr-FR', it: 'it-IT', ru: 'ru-RU', pl: 'pl-PL', ja: 'ja-JP',
+      ko: 'ko-KR', zh: 'zh-CN', tr: 'tr-TR', nl: 'nl-NL', fi: 'fi-FI', sv: 'sv-SE',
+      nb: 'nb-NO', no: 'nb-NO', da: 'da-DK', cs: 'cs-CZ', ro: 'ro-RO', hu: 'hu-HU',
+      ms: 'ms-MY', th: 'th-TH', id: 'id-ID', vi: 'vi-VN', hi: 'hi-IN', ca: 'ca-ES',
+    };
+    return MAP[base] || 'en-US';
+  }
+
+  // Decide the stacked-subtitle layout.  audioLocale = the episode's spoken
+  // language; locales = subtitle locales available on the episode (string[]);
+  // native = the viewer's language (already guaranteed to be on the episode by
+  // the picker that calls this).
+  //   audioMatched (a sub exists in the audio language AND it differs from the
+  //     viewer's) → primary = audio (spoken language on top), secondary = native
+  //   else (no sub matches the audio, or audio == native) → primary = native
+  //     alone, no secondary  (honest fallback — we can't match what isn't there)
+  function planLearningMode({ audioLocale, locales, native } = {}) {
+    const has = (loc) => !!loc && Array.isArray(locales) && locales.includes(loc);
+    if (has(audioLocale) && audioLocale !== native) {
+      return { primary: audioLocale, secondary: native || '', audioMatched: true };
+    }
+    return { primary: native || '', secondary: '', audioMatched: false };
+  }
+
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
   NS.CRSubFix.createCatalog = createCatalog;
+  NS.CRSubFix.learning = { defaultNativeLocale, planLearningMode };
 })();

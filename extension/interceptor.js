@@ -53,7 +53,7 @@
   // Diagnostic: surface any missing module so a silent bail is visible.
   const NS = self.CRSubFix;
   if (!NS) { console.warn('[CR Sub Fix] interceptor.js bail: self.CRSubFix is undefined'); return; }
-  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme'].filter(k => !NS[k]);
+  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme','learning'].filter(k => !NS[k]);
   if (_missing.length) {
     console.warn('[CR Sub Fix] interceptor.js bail: missing modules:', _missing, 'present:', Object.keys(NS));
     return;
@@ -74,6 +74,7 @@
   const SIGN_TRACK = NS.signTrack;
   const SUB_SYNC   = NS.subSync;
   const CUSTOM     = NS.customSource;
+  const LEARN      = NS.learning;
   const THEME      = NS.uiTheme.tokens;
   const panelStyle = NS.uiTheme.panel;
 
@@ -444,12 +445,30 @@
     // Dual subtitles: pick / clear the secondary track (persisted across episodes).
     onSelectSecondary: (locale) => selectSecondary(locale),
     getSecondary:      ()       => getSecondaryPref(),
+    // Learning mode: the guided "match the audio + your language" stack.  The
+    // menu hands back the locale to use as the support ("native") track; we set
+    // the audio-matched primary + that secondary (see applyLearningMode).
+    onApplyLearning:   (locale) => applyLearningMode(locale),
+    getLearningInfo:   ()       => learningInfo(),
     // Which track draws typeset signs (primary / secondary / both).
     onSetSignSource:   (mode)   => setSignSrcMode(mode),
     getSignSource:     ()       => getSignSrcMode(),
     // Whether the loaded secondary track actually has signs (else grey out the
     // Secondary/Both sign options — CR ships some locales dialogue-only).
     getSecondaryHasSigns: ()    => _secondaryHasSigns,
+    // ▾ → "Show" submenu: per-layer visibility.  'official' is the inverse of
+    // hideOfficialSubs (the switch reads "Crunchyroll's own subtitles", so on =
+    // shown).  Writes go through saveSetting (chrome.storage, popup-synced).
+    getLayer: (name) =>
+      name === 'dialogue' ? !!isShowDialogue()
+      : name === 'signs'  ? !!isShowSigns()
+      : name === 'official' ? !isHideOfficialSubs()
+      : true,
+    onSetLayer: (name, on) => {
+      if (name === 'dialogue')      saveSetting('showDialogue', !!on);
+      else if (name === 'signs')    saveSetting('showSigns', !!on);
+      else if (name === 'official') saveSetting('hideOfficialSubs', !on);
+    },
     onLoadFile:      ()       => promptLoadFile(),
     onRemoveCustom:  (id)     => removeCustomSource(id),
     onAdjustSync:    (id)     => openSyncPanel(id),
@@ -1320,6 +1339,13 @@
     for (const [val, label] of opts) {
       const o = document.createElement('option');
       o.value = val; o.textContent = label;
+      // Explicit dark bg + light text per option.  color-scheme:dark on the
+      // <select> styles the CLOSED control, but the native option-list popup is
+      // drawn light on Windows — leaving our light option text invisible on white
+      // (the "whited-out" dropdown).  Styling each option directly is honored by
+      // Chrome's popup and fixes it regardless of platform.
+      o.style.background = '#1a1a2e';
+      o.style.color      = THEME.text;
       if (val === selected) o.selected = true;
       sel.appendChild(o);
     }
@@ -1747,6 +1773,22 @@
   const getSubBottomFloor      = () => SETTINGS.read(html, 'subBottomFloor');
   const isAutoPauseLine        = () => SETTINGS.read(html, 'autoPauseLine');
   const getSecondarySignGap    = () => SETTINGS.read(html, 'secondarySignGap');
+  // Per-layer visibility ("Show on screen").  Default true; gate the primary
+  // dialogue band (onTimeUpdate) and the typeset signs (pushSignLayer + the CSS
+  // sign path) independently of the master overlay on/off.
+  const isShowDialogue         = () => SETTINGS.read(html, 'showDialogue');
+  const isShowSigns            = () => SETTINGS.read(html, 'showSigns');
+  // Persist a single settings-schema key the player UI changed.  The MAIN world
+  // can't write chrome.storage, so: (1) optimistically write the attr locally for
+  // an instant re-render (the settings MutationObserver fires), then (2) post a
+  // token-guarded SET_SETTING to content.js, which writes chrome.storage so the
+  // change survives reload and the popup reflects it.  Re-assert the toggle token
+  // first — CR's hydration can strip it, which would make content.js reject this.
+  function saveSetting(key, value) {
+    try { SETTINGS.write(html, key, value); } catch (_) {}
+    try { html.setAttribute(PROTOCOL.ATTR.TOGGLE_TOKEN, TOGGLE_TOKEN); } catch (_) {}
+    try { window.postMessage({ type: PROTOCOL.POST.SET_SETTING, token: TOGGLE_TOKEN, key, value }, window.location.origin); } catch (_) {}
+  }
   // (The style-override values are read directly via SETTINGS.read in
   // captureStyleCtx(), so no per-key getter accessors are kept here.)
   // Target + source are chosen on the player (⚙ Translation settings) and
@@ -2493,7 +2535,9 @@
     let ass = null;
     _signsViaCss = false;
     try {
-      if (isLibassSigns() && overlayActive) {
+      // isShowSigns() gates the whole sign layer: when off, libass is cleared and
+      // _signsViaCss stays false, so the CSS sign path (cssSignCues) draws nothing.
+      if (isLibassSigns() && overlayActive && isShowSigns()) {
         const layer = computeSignLayer();
         // CJK sign layer → render on the CSS overlay (system fonts) instead of
         // libass (bundled fonts only).  Keep libass empty; onTimeUpdate draws
@@ -2600,9 +2644,94 @@
     if (overlayActive) onTimeUpdate();
   }
 
+  // ── Learning mode (audio-matched primary + your-language secondary) ─────────
+  // The "watch & learn" study layout in one tap: the language being SPOKEN on
+  // top (matched to the episode's audio), the viewer's own language stacked
+  // beneath.  The primary is matched to the audio automatically; the support
+  // ("native") language is picked once and persists across episodes.  The
+  // audio-match / fallback decision is the pure planLearningMode() in
+  // lib/subtitle-catalog.js; everything here is the DOM/Episode wiring.
+  const NATIVE_PREF_KEY = 'crSubFix_native';
+  const getNativePref = () => {
+    try { const v = localStorage.getItem(NATIVE_PREF_KEY); if (v) return v; } catch (_) {}
+    let ui = 'en-US';
+    try { ui = navigator.language || 'en-US'; } catch (_) {}
+    return LEARN.defaultNativeLocale(ui);
+  };
+  const setNativePref = (loc) => { try { if (loc) localStorage.setItem(NATIVE_PREF_KEY, loc); } catch (_) {} };
+
+  // Label for an AUDIO locale.  LOCALE_LABELS maps ja-JP to "English (Japanese
+  // source)" — right for the ja-JP SUBTITLE source row, but wrong as an audio
+  // language name — so spell out Japanese audio explicitly.
+  function audioLabel(loc) {
+    if (loc === 'ja-JP') return 'Japanese';
+    return LOCALE_LABELS[loc] ?? loc;
+  }
+
+  // What the "Learning mode" submenu shows: the episode's audio language and
+  // whether a subtitle in that language exists on this episode (else the menu
+  // tells the user it can't match the audio).
+  function learningInfo() {
+    const ep = currentEp();
+    const audio = ep ? ep.catalog.currentAudio() : null;
+    const hasSub = !!(ep && audio && ep.catalog.versions().some(v => v.locale === audio));
+    return {
+      audioLocale: audio || '',
+      audioLabel:  audio ? audioLabel(audio) : '',   // ja-JP audio = "Japanese", not the sub-row label
+      audioHasSub: hasSub,
+      native:      getNativePref(),
+    };
+  }
+
+  function applyLearningMode(nativeLocale) {
+    const ep = currentEp();
+    if (!ep) return;
+    if (nativeLocale) setNativePref(nativeLocale);
+    const native  = nativeLocale || getNativePref();
+    const audio   = ep.catalog.currentAudio();
+    const locales = ep.catalog.versions().map((v) => v.locale);
+    const plan    = LEARN.planLearningMode({ audioLocale: audio, locales, native });
+    markLearnHintSeen();   // an explicit pick means the feature's been found
+    // Set the primary first (it (re)activates the overlay), then the secondary,
+    // so maybeLoadSecondary keys off the freshly-set primary.
+    if (plan.primary) selectSource(plan.primary);
+    selectSecondary(plan.secondary || '');
+    if (plan.audioMatched) {
+      log.info(`Learning mode: primary=[${plan.primary}] secondary=[${plan.secondary}].`);
+    } else {
+      log.info(`Learning mode: no audio-matched sub (audio=[${audio || '?'}]) — primary=[${plan.primary}].`);
+      if (audio && !locales.includes(audio)) {
+        UI.showToast({ host: toastHost(), text: `No ${audioLabel(audio)} subtitles for this episode — showing your language only`, duration: 4000 });
+      }
+    }
+  }
+
+  // One-shot contextual onboarding.  When the audio is in a language the viewer
+  // is plausibly learning (≠ their UI language) AND this episode has a matching
+  // subtitle, nudge them toward the stacked study layout.  Shown at most once.
+  const LEARN_HINT_KEY = 'crSubFix_seenLearnHint';
+  function markLearnHintSeen() { try { localStorage.setItem(LEARN_HINT_KEY, '1'); } catch (_) {} }
+  function maybeShowLearnHint() {
+    if (!isEnabled()) return;
+    try { if (localStorage.getItem(LEARN_HINT_KEY)) return; } catch (_) { return; }
+    const ep = currentEp();
+    const audio = ep && ep.catalog.currentAudio();
+    if (!audio) return;
+    const native = getNativePref();
+    if (audio === native) return;                                       // no learning gap
+    if (!ep.catalog.versions().some((v) => v.locale === audio)) return; // no audio-matched sub
+    markLearnHintSeen();
+    UI.showToast({
+      host:     toastHost(),
+      text:     `Learning ${audioLabel(audio)}? Show ${audioLabel(audio)} + ${audioLabel(native)} subtitles together — ▾ menu › 📚 Learning mode`,
+      duration: 8000,
+    });
+  }
+
   // Which \pos sign cues the CSS overlay should draw (when libass is off, or for
   // the CJK fallback), mirroring the "Signs" selector's primary/secondary/both.
   function cssSignCues(priCues, secCues) {
+    if (!isShowSigns()) return [];   // signs hidden — draw none on the CSS overlay
     const mode = getSignSrcMode();
     const pri = priCues.filter((c) => c.pos);
     const sec = secCues.filter((c) => c.pos);
@@ -2628,7 +2757,10 @@
     const t = videoEl.currentTime;
     const priAll = ep.cuesAt(t, offset);
     const secAll = ep.secondaryCues.length ? ep.secondaryCuesAt(t, offset) : [];
-    const dialogue = priAll.filter((c) => !c.pos);
+    // isShowDialogue() hides just the primary spoken-line band (signs + the
+    // secondary track keep their own visibility).  With dialogue hidden there's
+    // no line on screen, so study auto-pause below naturally won't fire.
+    const dialogue = isShowDialogue() ? priAll.filter((c) => !c.pos) : [];
 
     // Study mode: pause the instant a dialogue line finishes.  We act only on
     // the showing→gap transition, and timeupdate stops firing once paused, so it
@@ -4023,6 +4155,7 @@
       sourceMenu.updateButtonVisibility();
       log.info(`Source picker: ${newVersions.map(v => v.locale).join(', ')}`);
       maybeAutoResumeTranslate();  // continue a translation interrupted by a reload
+      maybeShowLearnHint();        // one-shot nudge toward the audio+native study stack
 
       // Auto-recover the button from a premature-click 'unavail' state.
       // The user clicked JP CC during the gap between dub-switch SPA

@@ -70,6 +70,11 @@
     RPC_REQ:       'CR_SUB_RPC_REQ', // MAIN    → content: {id, method, payload, token}
     RPC_RES:       'CR_SUB_RPC_RES', // content → MAIN: {id, ok, result?, error?}
     SIGN_ASS:      'CR_SUB_SIGN_ASS',// MAIN    → content: {ass, token} — feed libass (signs) or null to clear
+    // MAIN → content: {key, value, token} — persist one settings-schema key to
+    // chrome.storage so a player-side toggle (e.g. the "Show" layer switches)
+    // survives reload and the popup reflects it.  content.js validates the key
+    // against the schema, so the page can't write arbitrary storage.
+    SET_SETTING:   'CR_SUB_SET_SETTING',
   };
 
   const protocol = { ATTR, STATUS, MSG, POST };

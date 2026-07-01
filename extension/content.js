@@ -145,6 +145,27 @@
     }
   });
 
+  // ── MAIN-world settings writer ─────────────────────────────────────────────
+  // The interceptor (MAIN world) can't write chrome.storage, so a player-side
+  // toggle (the ▾ "Show" submenu) posts the change here.  Token + same-window
+  // check + a strict schema-key allowlist gate it: only keys declared in
+  // settings-schema.js are accepted, so a page script can't write arbitrary
+  // storage.  The write fans back out through chrome.storage.onChanged →
+  // applySettings → writeAttrs, so the interceptor re-renders and the popup
+  // (if open) sees the new value.
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.type !== POST.SET_SETTING) return;
+    const token = toggleToken();
+    if (!token || data.token !== token) return;
+    const entry = SETTINGS.SCHEMA.find((e) => e.key === data.key);
+    if (!entry) return;
+    let v = data.value;
+    if (entry.type === 'bool') v = (v === true || v === 'true');
+    chrome.storage.local.set({ [entry.key]: v });
+  });
+
   // ── libass (SubtitlesOctopus) sign renderer ────────────────────────────────
   // The MAIN world posts a "signs-only" .ass (the \pos typeset cues) here; we
   // render it with REAL libass (wasm) so the 3-D typeset matches CR's own

@@ -22,6 +22,12 @@
     { key: 'enabled',              attr: 'data-cr-sub-fix',        default: true,       type: 'bool'   },
     { key: 'autoActivate',         attr: 'data-cr-auto-activate',  default: false,      type: 'bool'   },
     { key: 'hideOfficialSubs',     attr: 'data-cr-hide-official',  default: false,      type: 'bool'   },
+    // Per-layer visibility ("Show on screen").  Independent of the master overlay
+    // on/off: hide just the spoken-line band, or just the typeset signs, while the
+    // other layer keeps rendering.  Toggled from BOTH the popup and the player's
+    // ▾ → "Show" submenu (the player route writes via the SET_SETTING bridge).
+    { key: 'showDialogue',         attr: 'data-cr-show-dialogue',  default: true,       type: 'bool'   },
+    { key: 'showSigns',            attr: 'data-cr-show-signs',     default: true,       type: 'bool'   },
     { key: 'includeDiagnostics',   attr: 'data-cr-include-diag',    default: true,       type: 'bool'   },
     { key: 'subScale',             attr: 'data-cr-sub-scale',      default: 1,          type: 'float'  },
     { key: 'subOffset',            attr: 'data-cr-sub-offset',     default: 0,          type: 'float'  },
@@ -138,11 +144,19 @@
     return e ? decode(e, el.getAttribute(e.attr)) : undefined;
   }
 
+  // Write a SINGLE setting's attribute (the inverse of read).  Used for an
+  // optimistic, instant local update when the player UI flips one setting,
+  // without rewriting every other attr.  Unknown keys are a no-op.
+  function write(el, key, value) {
+    const e = SCHEMA.find(s => s.key === key);
+    if (e) el.setAttribute(e.attr, encode(e, value));
+  }
+
   const ATTRS = SCHEMA.map(e => e.attr);
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.settings = { SCHEMA, ATTRS, defaults, writeAttrs, readAll, read };
+  NS.CRSubFix.settings = { SCHEMA, ATTRS, defaults, writeAttrs, readAll, read, write };
 })();
 
 // ===== generated from lib/protocol.js =====
@@ -202,6 +216,11 @@
     RPC_REQ:       'CR_SUB_RPC_REQ', // MAIN    → content: {id, method, payload, token}
     RPC_RES:       'CR_SUB_RPC_RES', // content → MAIN: {id, ok, result?, error?}
     SIGN_ASS:      'CR_SUB_SIGN_ASS',// MAIN    → content: {ass, token} — feed libass (signs) or null to clear
+    // MAIN → content: {key, value, token} — persist one settings-schema key to
+    // chrome.storage so a player-side toggle (e.g. the "Show" layer switches)
+    // survives reload and the popup reflects it.  content.js validates the key
+    // against the schema, so the page can't write arbitrary storage.
+    SET_SETTING:   'CR_SUB_SET_SETTING',
   };
 
   const protocol = { ATTR, STATUS, MSG, POST };

@@ -175,6 +175,36 @@ section('Long-cue scan');
   eq('nothing stale from far in the past', at.includes('d10'), false);
 }
 
+// ── 2d. Learning mode — pure native-default + audio-match planning ───────────
+section('Learning mode (audio-matched stack)');
+{
+  const L = NS.learning;
+  // Browser UI language → closest CR subtitle locale (the "your language" default).
+  eq('native: it → it-IT', L.defaultNativeLocale('it'), 'it-IT');
+  eq('native: de-DE → de-DE', L.defaultNativeLocale('de-DE'), 'de-DE');
+  eq('native: es-MX → es-419', L.defaultNativeLocale('es-MX'), 'es-419');
+  eq('native: es-ES → es-ES', L.defaultNativeLocale('es-ES'), 'es-ES');
+  eq('native: pt-PT → pt-PT', L.defaultNativeLocale('pt-PT'), 'pt-PT');
+  eq('native: pt-BR → pt-BR', L.defaultNativeLocale('pt'), 'pt-BR');
+  eq('native: en-GB → en-GB', L.defaultNativeLocale('en-GB'), 'en-GB');
+  eq('native: unknown/empty → en-US', [L.defaultNativeLocale('xx'), L.defaultNativeLocale('')], ['en-US', 'en-US']);
+
+  const locales = ['ja-JP', 'en-US', 'de-DE', 'it-IT'];
+  // Audio matched: a sub exists in the spoken language and differs from native →
+  // spoken language on top, viewer's language stacked beneath.
+  eq('plan: audio matched → audio primary + native secondary',
+    L.planLearningMode({ audioLocale: 'it-IT', locales, native: 'en-US' }),
+    { primary: 'it-IT', secondary: 'en-US', audioMatched: true });
+  // No subtitle in the audio language → fall back to the viewer's language alone.
+  eq('plan: no audio sub → native only',
+    L.planLearningMode({ audioLocale: 'fr-FR', locales, native: 'en-US' }),
+    { primary: 'en-US', secondary: '', audioMatched: false });
+  // Audio == native (nothing to learn) → single track, no stack.
+  eq('plan: audio == native → native only',
+    L.planLearningMode({ audioLocale: 'en-US', locales, native: 'en-US' }),
+    { primary: 'en-US', secondary: '', audioMatched: false });
+}
+
 // ── 3. Sync transforms — subSync owns the model, the panel just wires it ─────
 section('Sync transforms (lib/sub-sync.js)');
 {
@@ -257,6 +287,17 @@ section('Settings schema');
   const el = { _a: {}, setAttribute(k, v) { this._a[k] = v; }, getAttribute(k) { return k in this._a ? this._a[k] : null; } };
   S.writeAttrs(el, { ...d, mtProvider: 'deepl', mtTarget: 'ko-KR', mtSource: 'en-US' });
   eq('mt round-trip', [S.read(el, 'mtProvider'), S.read(el, 'mtTarget'), S.read(el, 'mtSource')], ['deepl', 'ko-KR', 'en-US']);
+
+  // Per-layer visibility ("Show on screen") — default true, round-trips, and the
+  // single-key write() helper sets ONLY that key's attr (used by the player's
+  // SET_SETTING optimistic write).
+  eq('show-layer defaults true', [d.showDialogue, d.showSigns], [true, true]);
+  S.writeAttrs(el, { ...d, showDialogue: false, showSigns: false });
+  eq('show-layer round-trip off', [S.read(el, 'showDialogue'), S.read(el, 'showSigns')], [false, false]);
+  S.write(el, 'showSigns', true);
+  eq('write() flips one key only', [S.read(el, 'showDialogue'), S.read(el, 'showSigns')], [false, true]);
+  S.write(el, 'nonexistentKey', true);   // unknown key is a silent no-op
+  ok('write() ignores unknown key', S.read(el, 'nonexistentKey') === undefined);
 }
 
 // ── 5. Service-worker translate (DeepL-only since v1.7.1) ───────────────────

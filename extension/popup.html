@@ -638,6 +638,79 @@
       background: var(--accent-weak);
       outline: none;
     }
+
+    /* ── Live status card (state + Showing / Audio / Timing) ── */
+    .status-card {
+      background: var(--panel-2);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 9px;
+      padding: 11px 12px;
+      margin-bottom: 10px;
+    }
+    .status-card .sc-top { display: flex; align-items: center; gap: 9px; }
+    .status-card .sc-state { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .sc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px 10px;
+      margin-top: 10px;
+    }
+    .sc-grid.hidden { display: none; }
+    .sc-item .k { font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+    .sc-item .v { font-size: 12px; font-weight: 600; color: var(--text); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── "On the player ▾" signpost — the headline actions live on the player,
+          not in this popup; this card answers "what can I do" and points there. */
+    .signpost {
+      background: linear-gradient(135deg, rgba(255,107,53,0.10), rgba(176,140,255,0.07));
+      border: 1px solid var(--accent-line);
+      border-radius: 9px;
+      padding: 10px 12px 8px;
+      margin-bottom: 12px;
+    }
+    .signpost-title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 6px;
+    }
+    .signpost-title .caret {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 4px;
+      background: var(--accent-weak); color: var(--accent); font-size: 11px;
+    }
+    .signpost-item { display: flex; align-items: center; gap: 9px; padding: 5px 2px; }
+    .signpost-item + .signpost-item { border-top: 1px solid rgba(255,255,255,0.06); }
+    .signpost-item .ic { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+    .signpost-item .nm { flex: 1; font-size: 12px; font-weight: 600; color: var(--text); }
+    .signpost-item .nm small { display: block; font-size: 9px; font-weight: 400; color: var(--text-mute); }
+    .signpost-item .where { font-size: 9px; color: var(--text-dim); flex-shrink: 0; }
+    .signpost-foot {
+      font-size: 9px; color: var(--text-dim); text-align: center;
+      padding-top: 7px; margin-top: 3px; border-top: 1px dashed rgba(255,255,255,0.09);
+    }
+
+    /* Reload caveat, tucked right under the master toggle where it matters. */
+    .master-note { font-size: 9px; color: var(--text-mute); margin: 4px 0 6px; padding-left: 2px; }
+
+    /* Status hint — an actionable line shown when idle (no active subtitles). */
+    .st-hint { font-size: 10px; color: var(--text-dim); margin-top: 9px; line-height: 1.4; }
+
+    /* ── Section launcher tiles (2×2) — replace the plain collapsible headers.
+          Each tile opens its section (accordion); the open panel renders below. */
+    .section-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 8px; }
+    .stile {
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px 8px; text-align: center; cursor: pointer; font-family: inherit;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .stile:hover { border-color: var(--border-2); background: var(--panel-3); }
+    .stile.active { border-color: var(--accent-line); background: var(--accent-weak); }
+    .stile .ti { font-size: 18px; line-height: 1; }
+    .stile .tn { font-size: 11px; font-weight: 600; margin-top: 5px; color: var(--text); }
+    .stile.active .tn { color: var(--accent); }
+    /* Tiled sections: the tile is the header now, so drop the summary + its rule. */
+    details.tiled { margin: 0; border-top: none; padding-top: 0; }
+    details.tiled > summary { display: none; }
   </style>
 </head>
 <body>
@@ -647,13 +720,28 @@
     <span class="app-version" id="appVersion"></span>
   </header>
 
-  <!-- Status -->
-  <div class="status-bar">
-    <span class="status-dot" id="statusDot"></span>
-    <div style="display:flex;flex-direction:column;gap:1px;min-width:0;">
-      <span class="status-text" id="statusText">Checking…</span>
-      <span class="status-detail" id="statusDetail" style="display:none;"></span>
+  <!-- Live status -->
+  <div class="status-card">
+    <div class="sc-top">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="sc-state" id="statusText">Checking…</span>
     </div>
+    <div class="sc-grid hidden" id="stGrid">
+      <div class="sc-item"><div class="k">Showing</div><div class="v" id="stShowing">—</div></div>
+      <div class="sc-item"><div class="k">Audio</div><div class="v" id="stAudio">—</div></div>
+      <div class="sc-item"><div class="k">Timing</div><div class="v" id="stSync">—</div></div>
+    </div>
+    <div class="st-hint" id="stHint" style="display:none;"></div>
+  </div>
+
+  <!-- What you can do — the headline actions live on the player's ▾ menu, not in
+       this popup, so point users there. -->
+  <div class="signpost">
+    <div class="signpost-title"><span class="caret">▾</span> What you can do — on the player</div>
+    <div class="signpost-item"><span class="ic">🌐</span><span class="nm">Pick subtitle language<small>Any language on the episode</small></span><span class="where">▾ menu</span></div>
+    <div class="signpost-item"><span class="ic">📚</span><span class="nm">Learning mode<small>Two subtitles — audio + your language</small></span><span class="where">▾ menu</span></div>
+    <div class="signpost-item"><span class="ic">✨</span><span class="nm">Translate<small>Fill a language Crunchyroll doesn’t carry</small></span><span class="where">▾ menu</span></div>
+    <div class="signpost-foot">Open the <b style="color:var(--accent)">▾</b> next to the subtitle button on the player</div>
   </div>
 
   <!-- Core switches: the daily controls, always visible -->
@@ -665,39 +753,63 @@
         <span class="slider"></span>
       </label>
     </div>
+    <div class="master-note">Changes apply after you reload the episode tab.</div>
     <div class="row">
       <div>
         <div class="row-label">Auto-enable subtitles</div>
-        <div class="row-sub">Activates when the episode starts playing</div>
+        <div class="row-sub">Turns on when the episode starts playing</div>
       </div>
       <label class="toggle">
         <input type="checkbox" id="toggleAuto" />
         <span class="slider"></span>
       </label>
     </div>
+  </div>
+
+  <!-- Show on screen: per-layer visibility (what to show or not).  Mirrors the
+       player's ▾ → "Show on screen" submenu.  Kept always-visible (not a
+       collapsible) since it's a daily decision. -->
+  <div class="section">
+    <div class="sub-label" style="padding-left:2px;">Show on screen</div>
+    <div class="row">
+      <div class="row-label">Dialogue</div>
+      <label class="toggle">
+        <input type="checkbox" id="toggleShowDialogue" />
+        <span class="slider"></span>
+      </label>
+    </div>
     <div class="row">
       <div>
-        <div class="row-label">Hide Crunchyroll subtitles</div>
-        <div class="row-sub">Always hides Crunchyroll's own subtitles (switch to None)</div>
+        <div class="row-label">Typeset signs</div>
+        <div class="row-sub">On-screen text — signs, titles, captions</div>
       </div>
       <label class="toggle">
-        <input type="checkbox" id="toggleHideOfficial" />
+        <input type="checkbox" id="toggleShowSigns" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="row-label">Crunchyroll's own subtitles</div>
+        <div class="row-sub">Show CR's built-in subtitles alongside ours</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggleShowOfficial" />
         <span class="slider"></span>
       </label>
     </div>
   </div>
 
-  <details id="sec-playback" open>
-    <summary>Playback</summary>
+  <!-- Section launcher tiles (2×2): open one collapsible section at a time. -->
+  <div class="section-tiles">
+    <button class="stile" data-target="sec-appearance"><div class="ti">🎨</div><div class="tn">Appearance</div></button>
+    <button class="stile" data-target="sec-timing"><div class="ti">⏱</div><div class="tn">Timing &amp; study</div></button>
+    <button class="stile" data-target="sec-mt"><div class="ti">✨</div><div class="tn">Translation</div></button>
+    <button class="stile" data-target="sec-help"><div class="ti">❓</div><div class="tn">Help</div></button>
+  </div>
 
-    <!-- Subtitle size -->
-    <div class="row col">
-      <div class="row-header">
-        <div class="row-label">Subtitle size</div>
-        <span class="value-label" id="scaleLabel">100%</span>
-      </div>
-      <input type="range" id="scaleSlider" min="25" max="250" step="5" value="100" />
-    </div>
+  <details id="sec-timing" class="tiled">
+    <summary>Timing &amp; study</summary>
 
     <!-- Sync offset -->
     <div class="row col">
@@ -718,15 +830,6 @@
       </div>
     </div>
 
-    <!-- Bottom margin -->
-    <div class="row col">
-      <div class="row-header">
-        <div class="row-label">Bottom margin <span class="help" tabindex="0" data-tip="Minimum distance from the bottom of the video to default-anchored subtitles (% of video height). Raise to clear the playbar further; lower to tuck closer.">?</span></div>
-        <span class="value-label" id="subBottomFloorLabel">6%</span>
-      </div>
-      <input type="range" id="subBottomFloor" min="0" max="30" step="1" value="6" />
-    </div>
-
     <!-- Study mode: pause when each line ends -->
     <div class="row">
       <div>
@@ -742,14 +845,14 @@
     <!-- Dual-sign spacing: lift the second language's signs above the first -->
     <div class="row col">
       <div class="row-header">
-        <div class="row-label">Dual-sign spacing <span class="help" tabindex="0" data-tip="With dual subtitles set to show Both languages' typeset signs, how far to lift the second language's signs above the first so they don't overlap (% of video height).">?</span></div>
+        <div class="row-label">Dual-sign spacing <span class="help" tabindex="0" data-tip="With a second subtitle set to show Both languages' typeset signs, how far to lift the second language's signs above the first so they don't overlap (% of video height).">?</span></div>
         <span class="value-label" id="secSignGapLabel">8%</span>
       </div>
       <input type="range" id="secSignGap" min="0" max="40" step="1" value="8" />
     </div>
   </details>
 
-  <details id="sec-appearance">
+  <details id="sec-appearance" class="tiled">
     <summary>Subtitle appearance</summary>
 
     <!-- Live preview — reflects current style -->
@@ -782,6 +885,24 @@
         <option value="sticker">Sticker</option>
         <option value="glass">Glass</option>
       </select>
+    </div>
+
+    <!-- Subtitle size -->
+    <div class="row col">
+      <div class="row-header">
+        <div class="row-label">Subtitle size</div>
+        <span class="value-label" id="scaleLabel">100%</span>
+      </div>
+      <input type="range" id="scaleSlider" min="25" max="250" step="5" value="100" />
+    </div>
+
+    <!-- Bottom margin -->
+    <div class="row col">
+      <div class="row-header">
+        <div class="row-label">Bottom margin <span class="help" tabindex="0" data-tip="Minimum distance from the bottom of the video to default-anchored subtitles (% of video height). Raise to clear the playbar further; lower to tuck closer.">?</span></div>
+        <span class="value-label" id="subBottomFloorLabel">6%</span>
+      </div>
+      <input type="range" id="subBottomFloor" min="0" max="30" step="1" value="6" />
     </div>
 
     <div class="section">
@@ -971,8 +1092,8 @@
     </div>
   </details>
 
-  <details id="sec-mt">
-    <summary>Machine translation</summary>
+  <details id="sec-mt" class="tiled">
+    <summary>Translation</summary>
     <div class="row col sm bare">
       <div class="muted">
         Fill in a language Crunchyroll doesn't carry — e.g. Japanese — by machine-translating
@@ -989,7 +1110,7 @@
 
       <div class="muted" style="margin-top:2px;">
         Target language &amp; source track are chosen on the player — ▾ source picker →
-        <b style="color:var(--link);">⚙ Translation settings</b> — and they're saved per your last choice.
+        <b style="color:var(--link);">Manage sources… → ⚙ Translation settings</b> — and they're saved per your last choice.
       </div>
 
       <input id="mtApiKey" class="report-note" type="password" autocomplete="off" placeholder="Paste your API key" style="margin-top:6px;margin-bottom:4px;" />
@@ -1001,7 +1122,7 @@
     </div>
   </details>
 
-  <details id="sec-help">
+  <details id="sec-help" class="tiled">
     <summary>Help &amp; feedback</summary>
     <div class="row col sm bare">
       <div class="muted">
@@ -1027,7 +1148,6 @@
   </a>
 
   <footer class="app-footer">
-    <span>Reload the episode tab after toggling the extension.</span>
     <span class="kbd-hint">Toggle <kbd>Alt+J</kbd> · Replay line <kbd>Alt+R</kbd> · Copy line <kbd>Alt+C</kbd></span>
   </footer>
 
