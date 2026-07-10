@@ -289,6 +289,48 @@ section('Catalog — dub CC resolution');
   eq('post-replacement same-language pick defers to the JP row', cat5.urlFor('en-US'), 'JP_ROW_EN');
 }
 
+// ── 2f. Signed-URL TTL cap (lib/episode.js signedUrlTtl) ─────────────────────
+// The cache TTL must never outlive the URL's embedded signature expiry, or a
+// later cache hit serves a URL the CDN rejects (HTTP 410).
+section('Signed-URL TTL cap');
+{
+  globalThis.localStorage = mkStore();
+  const ep = E.create('guidTTL');
+  const CACHE_TTL = 6 * 24 * 60 * 60 * 1000;      // mirror lib/episode.js
+  const sec = (offset) => Math.floor(Date.now() / 1000) + offset;
+  const near = (got, want, tol = 2000) => Math.abs(got - want) <= tol;  // Date.now() drift
+
+  // No embedded expiry → full CACHE_TTL.
+  eq('no expiry → CACHE_TTL', ep.signedUrlTtl('https://cdn/x.ass'), CACHE_TTL);
+  eq('null/empty urls ignored', ep.signedUrlTtl(null, undefined, ''), CACHE_TTL);
+
+  // CR's own HMAC format (the only format observed in the wild): ?t=exp=<epoch>~hmac=
+  ok('CR hmac expiry caps TTL to time-remaining',
+    near(ep.signedUrlTtl(`https://cdn/x.ass?t=exp=${sec(3600)}~hmac=abc`), 3600 * 1000));
+  // CloudFront canned policy (?Expires=<epoch>) — the fix; carries a plain epoch too.
+  ok('CloudFront Expires= expiry caps TTL',
+    near(ep.signedUrlTtl(`https://cdn/x.ass?Expires=${sec(3600)}&Signature=s&Key-Pair-Id=K1`), 3600 * 1000));
+
+  // Already-expired signature → 0 (setCached* then declines to cache).
+  eq('past expiry → 0', ep.signedUrlTtl(`https://cdn/x.ass?t=exp=${sec(-3600)}~hmac=abc`), 0);
+  // Expiry further out than CACHE_TTL → capped at CACHE_TTL, not the raw remaining.
+  eq('far-future expiry capped at CACHE_TTL',
+    ep.signedUrlTtl(`https://cdn/x.ass?t=exp=${sec(30 * 86400)}~hmac=abc`), CACHE_TTL);
+  // Soonest expiry across multiple URLs wins (caption + subtitle).
+  ok('soonest of several expiries wins',
+    near(ep.signedUrlTtl(`https://cdn/a.ass?t=exp=${sec(7200)}~hmac=a`,
+                         `https://cdn/b.ass?t=exp=${sec(1800)}~hmac=b`), 1800 * 1000));
+  // A millisecond-scale token (≥1e12) is not re-multiplied (guards the ×1000 scaling).
+  ok('millisecond expiry not re-scaled',
+    near(ep.signedUrlTtl(`https://cdn/x.ass?t=exp=${(Date.now() + 3600 * 1000)}~hmac=a`), 3600 * 1000));
+
+  // ponytail gap: CloudFront *custom* policy (?Policy=<base64 epoch>) is NOT
+  // parsed — no plain epoch to read, so it falls back to CACHE_TTL (status quo,
+  // no regression) rather than a base64/JSON parser for an unobserved case.
+  eq('CloudFront Policy= (custom) → CACHE_TTL fallback, not parsed',
+    ep.signedUrlTtl('https://cdn/x.ass?Policy=eyJTdGF0ZW1lbnQiOlt7fV19&Signature=s&Key-Pair-Id=K1'), CACHE_TTL);
+}
+
 // ── 3. Sync transforms — subSync owns the model, the panel just wires it ─────
 section('Sync transforms (lib/sub-sync.js)');
 {

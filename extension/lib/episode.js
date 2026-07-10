@@ -206,10 +206,20 @@
     // CR's signed CDN URLs carry an absolute expiry (…?t=exp=<unixSeconds>~…).
     // The cache TTL must never outlive it, or a later cache hit returns a URL the
     // CDN rejects with HTTP 410.  Cap the TTL to the soonest embedded expiry.
+    //
+    // CR serves subtitle URLs in its own HMAC format (?t=exp=<epoch>~hmac=) in
+    // every observed session; the regex also accepts CloudFront canned
+    // (?Expires=<epoch>) since subUrlBase treats those as real CR CDN URLs and
+    // they carry a plain epoch too.  ponytail: CloudFront *custom* policies
+    // (?Policy=<base64 JSON epoch>) are NOT parsed — unobserved on CR subtitle
+    // assets, and the base64/JSON decode is real bug surface for a case we can't
+    // show occurs.  Such a URL keeps the CACHE_TTL cap (status quo, no
+    // regression).  Upgrade if a Policy=-signed subtitle URL ever turns up:
+    // base64url-decode Policy and read AWS:EpochTime.
     function signedUrlTtl(...urls) {
       let exp = Infinity;
       for (const u of urls) {
-        const m = u && /[?&~=]exp=(\d{9,})/.exec(u);
+        const m = u && /[?&~=](?:exp|Expires)=(\d{9,})/.exec(u);
         if (m) {
           // CR currently emits a 10-digit unix-seconds expiry; tolerate a longer
           // or millisecond token without mis-scaling a far-future expiry (which
@@ -365,6 +375,7 @@
       setCachedSrcUrl: alive(setCachedSrcUrl),
       evictCachedSrcUrl: alive(evictCachedSrcUrl),
       anchorMapKey,
+      signedUrlTtl,   // exposed for unit tests (pure: closes over CACHE_TTL only)
 
       // ── Custom sources (uploads / machine translation) ────────────────────
       addCustomSource:     alive(addCustomSource),
