@@ -47,6 +47,7 @@ globalThis.sessionStorage = mkStore();
 
 // Load the pure libs (order matches manifest dependencies).
 load(read('extension/lib/subtitle-parser.js'));
+load(read('extension/lib/playback-api.js'));
 load(read('extension/lib/sign-track.js'));
 load(read('extension/lib/custom-source.js'));
 load(read('extension/lib/subtitle-catalog.js'));
@@ -194,15 +195,98 @@ section('Learning mode (audio-matched stack)');
   // spoken language on top, viewer's language stacked beneath.
   eq('plan: audio matched → audio primary + native secondary',
     L.planLearningMode({ audioLocale: 'it-IT', locales, native: 'en-US' }),
-    { primary: 'it-IT', secondary: 'en-US', audioMatched: true });
+    { primary: 'it-IT', secondary: 'en-US', audioMatched: true, nativeAvailable: true });
   // No subtitle in the audio language → fall back to the viewer's language alone.
   eq('plan: no audio sub → native only',
     L.planLearningMode({ audioLocale: 'fr-FR', locales, native: 'en-US' }),
-    { primary: 'en-US', secondary: '', audioMatched: false });
+    { primary: 'en-US', secondary: '', audioMatched: false, nativeAvailable: true });
   // Audio == native (nothing to learn) → single track, no stack.
   eq('plan: audio == native → native only',
     L.planLearningMode({ audioLocale: 'en-US', locales, native: 'en-US' }),
-    { primary: 'en-US', secondary: '', audioMatched: false });
+    { primary: 'en-US', secondary: '', audioMatched: false, nativeAvailable: true });
+  // Regression: audio matched but the viewer's language ISN'T on this episode
+  // (the "Match my audio — English, with Deutsch below" bug) → show the audio
+  // sub alone, NO promised-but-empty secondary, and flag native unavailable.
+  eq('plan: audio matched, native absent → audio primary alone, no secondary',
+    L.planLearningMode({ audioLocale: 'en-US', locales: ['ja-JP', 'en-US', 'es-419'], native: 'de-DE' }),
+    { primary: 'en-US', secondary: '', audioMatched: true, nativeAvailable: false });
+  // No audio sub AND native absent → nothing to show (honest empty plan).
+  eq('plan: neither audio nor native available → empty',
+    L.planLearningMode({ audioLocale: 'fr-FR', locales: ['ja-JP', 'es-419'], native: 'de-DE' }),
+    { primary: '', secondary: '', audioMatched: false, nativeAvailable: false });
+}
+
+// ── 2e. Catalog — dub CC (captions-sourced) resolution ───────────────────────
+// Regression for the "English CC missing" report: on a dub, CR ships the CC
+// (full transcript of the SPOKEN dialogue, timed to the playing cut) under the
+// session's `captions` map.  The same-language pick must serve that file, not
+// the JP row's translation-of-the-JP-script — which is byte-identical to the
+// default primary ("English (Japanese source)") and rendered a duplicate band.
+section('Catalog — dub CC resolution');
+{
+  const PB = NS.playbackApi;
+  // captionLocales: provenance extractor — which locales came from `captions`.
+  eq('captionLocales lists caption entries',
+    PB.captionLocales({ captions: { 'en-US': { url: 'u1' } }, subtitles: { 'de-DE': 'u2' } }),
+    ['en-US']);
+  eq('captionLocales skips url-less entries', PB.captionLocales({ captions: { 'en-US': {} } }), []);
+  eq('captionLocales tolerates absent maps', [PB.captionLocales({}), PB.captionLocales(null)], [[], []]);
+
+  // en-US dub: JP row has the translated subs; the dub row's en-US entry is
+  // the CC (captions-sourced).  Same-language pick → the CC.
+  const cat = NS.createCatalog({});
+  cat.recordSession('ja-JP', { 'en-US': 'JP_ROW_EN', 'de-DE': 'JP_ROW_DE' });
+  cat.recordSession('en-US', { 'en-US': 'DUB_CC' }, ['en-US']);
+  cat.setCurrentAudio('en-US');
+  eq('same-language pick returns the dub CC, not the JP row', cat.urlFor('en-US'), 'DUB_CC');
+  eq('captionSourced exposes the provenance', cat.captionSourced('en-US', 'en-US'), true);
+  // Cross-language picks keep the existing priority (current row, then JP row).
+  eq('cross-language pick unchanged (JP row)', cat.urlFor('de-DE'), 'JP_ROW_DE');
+
+  // Legacy same-language case preserved: a `subtitles`-sourced entry on the
+  // dub's own row is often signs-only, so the JP row's full transcript wins.
+  const cat2 = NS.createCatalog({});
+  cat2.recordSession('ja-JP', { 'de-DE': 'JP_ROW_DE' });
+  cat2.recordSession('de-DE', { 'de-DE': 'DE_SIGNS_ONLY' }); // no cc provenance
+  cat2.setCurrentAudio('de-DE');
+  eq('subtitles-sourced same-language entry still defers to JP row', cat2.urlFor('de-DE'), 'JP_ROW_DE');
+
+  // ...and still serves as the fallback when the JP row lacks the locale.
+  const cat3 = NS.createCatalog({});
+  cat3.recordSession('de-DE', { 'de-DE': 'DE_SIGNS_ONLY' });
+  cat3.setCurrentAudio('de-DE');
+  eq('same-language falls back to own row when JP row lacks it', cat3.urlFor('de-DE'), 'DE_SIGNS_ONLY');
+
+  // Sessions re-fetch on quality changes — a later merge without provenance
+  // must not erase it; reset() must.
+  cat.recordSession('en-US', { 'fr-FR': 'DUB_FR' });
+  eq('cc provenance survives later row merges', cat.urlFor('en-US'), 'DUB_CC');
+  cat.reset();
+  eq('reset clears provenance with the matrix', cat.captionSourced('en-US', 'en-US'), false);
+
+  // Eviction/replacement drop provenance WITH the entry — a later re-record
+  // from a subtitles-only session must not inherit the CC flag (which would
+  // serve a signs-only file in the CC-priority slot and label it "(CC)").
+  const cat4 = NS.createCatalog({});
+  cat4.recordSession('ja-JP', { 'en-US': 'JP_ROW_EN' });
+  cat4.recordSession('en-US', { 'en-US': 'DUB_CC' }, ['en-US']);
+  cat4.setCurrentAudio('en-US');
+  cat4.evictUrl('en-US');
+  eq('evictUrl clears cc provenance', cat4.captionSourced('en-US', 'en-US'), false);
+  cat4.recordSession('en-US', { 'en-US': 'DUB_SIGNS_ONLY' });   // provenance-less re-record
+  cat4.recordSession('ja-JP', { 'en-US': 'JP_ROW_EN' });
+  eq('provenance-less re-record defers to the JP row again', cat4.urlFor('en-US'), 'JP_ROW_EN');
+
+  const cat5 = NS.createCatalog({});
+  cat5.recordSession('en-US', { 'en-US': 'DUB_CC_BAD' }, ['en-US']);
+  cat5.recordSession('ja-JP', { 'en-US': 'JP_ROW_EN' });
+  cat5.setCurrentAudio('en-US');
+  cat5.replaceUrl('en-US', 'DUB_CC_BAD', 'JP_ROW_EN_COPY');     // wrong-title replacement
+  eq('replaceUrl swaps the URL', cat5.rowFor('en-US')['en-US'], 'JP_ROW_EN_COPY');
+  eq('replaceUrl drops cc provenance on the replaced row', cat5.captionSourced('en-US', 'en-US'), false);
+  // With provenance gone the same-language policy defers to the JP row again —
+  // the replaced entry no longer outranks it.
+  eq('post-replacement same-language pick defers to the JP row', cat5.urlFor('en-US'), 'JP_ROW_EN');
 }
 
 // ── 3. Sync transforms — subSync owns the model, the panel just wires it ─────
@@ -233,6 +317,62 @@ section('Sync transforms (lib/sub-sync.js)');
   const passthru = SY.applySync({ srcCues: cues, sync: { mode: 'none' } });
   eq('none = passthrough times', passthru.map((c) => c.start), [10, 60]);
   ok('passthrough is a copy, not the input array', passthru !== cues);
+}
+
+// ── 3a2. Remaster global-offset fallback (lib/remaster.js) ───────────────────
+section('Remaster global-offset fallback');
+{
+  const mkCue = (start, text) => ({ start, end: start + 2, text });
+  // A "dub" cut that is a constant +5s shift of the source, but WORDED
+  // differently on most lines (so precise anchoring would fail) — a handful of
+  // lines still share enough words to be recovered.
+  const src = [];
+  const ref = [];
+  const shared = [
+    'the transfer student arrived at noon',
+    'please open your textbooks to page ten',
+    'we will begin the assassination plan tonight',
+    'meet me behind the old school building',
+    'the teacher moves at mach twenty speed',
+    'everyone prepared their weapons carefully today',
+    'the class committee will vote tomorrow morning',
+    'she handed him the mysterious blue envelope',
+    'they trained hard all through the summer break',
+    'the final exam decides the whole outcome',
+  ];
+  shared.forEach((t, i) => { src.push(mkCue(10 + i * 20, t)); ref.push(mkCue(15 + i * 20, t)); });
+  // Divergent lines: present in both but reworded, so they won't anchor.
+  for (let i = 0; i < 40; i++) {
+    src.push(mkCue(12 + i * 10, `source phrasing variant number ${i} alpha`));
+    ref.push(mkCue(17 + i * 10, `dub rewording totally different ${i} beta`));
+  }
+  src.sort((a, b) => a.start - b.start); ref.sort((a, b) => a.start - b.start);
+
+  const strict = R.buildAnchorMap(src, ref);
+  ok(`precise anchoring falls short (got ${strict.length}/${R.MIN_ANCHORS})`, strict.length < R.MIN_ANCHORS);
+
+  const est = R.estimateGlobalOffset(src, ref);
+  ok('global offset recovered when precise anchoring fails', !!est);
+  eq('recovered offset ≈ +5s', Math.round(est.offset), 5);
+  ok(`agreement is high (${est ? est.agreement.toFixed(2) : 'n/a'})`, !!est && est.agreement >= 0.8);
+
+  // Same cut → offset ≈ 0 (must not invent a shift for already-aligned tracks).
+  const self = R.estimateGlobalOffset(src, src);
+  ok('self-match yields ~0 offset', !!self && Math.abs(self.offset) < 0.01);
+
+  // No shared content → null (nothing to anchor on, don't guess).
+  const noise = src.map((c, i) => mkCue(c.start, `completely unrelated gibberish token ${i} zzz`));
+  eq('no shared lines → null', R.estimateGlobalOffset(src, noise), null);
+
+  // Bimodal deltas (half shifted +3, half +30 — two cuts spliced, not one
+  // constant offset) → the 50/50 split can't reach the agreement bar → null.
+  const half = src.map((c, i) => mkCue(c.start + (i % 2 ? 3 : 30), c.text));
+  eq('bimodal (inconsistent) shifts rejected', R.estimateGlobalOffset(src, half), null);
+
+  // shiftCues is a pure constant translation returning a fresh array.
+  const shifted = R.shiftCues([{ start: 10, end: 12, text: 'a' }], 5);
+  eq('shiftCues moves start/end by offset', [shifted[0].start, shifted[0].end], [15, 17]);
+  ok('shiftCues(…, 0) returns a copy, not the input', R.shiftCues(src, 0) !== src);
 }
 
 // ── 3b. Custom-source factory (lib/custom-source.js) ────────────────────────

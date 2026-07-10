@@ -114,7 +114,10 @@
 
     const validateLang = async lang => {
       if (ep.disposed) return;
-      const url = catalog.rowFor('ja-JP')[lang] ?? catalog.urlFor(lang);
+      // Validate the exact file urlFor() serves (it may prefer the dub's own
+      // CC for same-language picks) — a verdict earned by a different copy
+      // would be attached to the file the user actually gets.
+      const url = catalog.urlFor(lang);
       if (!url) { catalog.setValidation(lang, 'no-subs'); return; }
 
       const cues = await fetchAndParseSubs(url);
@@ -156,8 +159,13 @@
       const result = await fetchSubUrlForSource(v.guid, v.locale, ep.authHeaders);
       if (result.rateLimited) break;
       if (!result.url) {
-        catalog.setValidation(v.locale, 'no-subs');
-        onValidated?.(v.locale, 'no-subs');
+        // Only a definitive "session has no track" earns the persisted badge —
+        // a transient fetch failure (network/5xx) must not stick no-subs for
+        // 7 days (the known-URL loop above already skips transients).
+        if (!result.fetchFailed) {
+          catalog.setValidation(v.locale, 'no-subs');
+          onValidated?.(v.locale, 'no-subs');
+        }
         continue;
       }
       await validateLang(v.locale);

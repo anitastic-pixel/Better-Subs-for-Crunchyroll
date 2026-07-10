@@ -16,6 +16,11 @@
  *     → new Cue array with start/end retimed through anchors
  *   CRSubFix.remaster.computeMedianDelta(anchors)
  *     → median (refTime − srcTime) across anchors, or 0 if empty
+ *   CRSubFix.remaster.estimateGlobalOffset(srcCues, refCues, opts?)
+ *     → { offset, samples, agreement } | null  — coarse constant-shift
+ *       fallback for when precise piecewise anchoring can't be built
+ *   CRSubFix.remaster.shiftCues(cues, offsetSec)
+ *     → new Cue array with every start/end shifted by offsetSec
  */
 (function () {
   'use strict';
@@ -35,6 +40,21 @@
   const MIN_CUE_CHARS      = 8;
   // Minimum anchor pairs for reliable interpolation across a full file.
   const MIN_ANCHORS        = 15;
+
+  // ── Global-offset fallback tuning ──────────────────────────────────────────
+  // When precise (piecewise) anchoring can't be built — e.g. an English DUB
+  // whose CC is a different English script than the JP-source sub translation,
+  // so almost no lines word-match at MATCH_THRESHOLD — the two cuts often still
+  // differ by a single near-constant time shift (the dub just adds a few
+  // seconds of lead-in).  estimateGlobalOffset recovers that one number using a
+  // LOWER match bar and the outlier-robust median of many candidate deltas, so
+  // coincidental false matches wash out.
+  const OFFSET_MATCH_THRESHOLD = 0.5;  // looser than MATCH_THRESHOLD — median absorbs the noise
+  const OFFSET_MIN_SAMPLES     = 8;    // too few candidates → not trustworthy
+  const OFFSET_CONSISTENCY_TOL = 2.5;  // s — a sample "agrees" if within this of the median
+  const OFFSET_MIN_AGREEMENT   = 0.6;  // a clear majority must agree, else it's not one clean shift
+                                       // (a real constant shift clusters tightly — measured ~0.93;
+                                       //  a 50/50 split = two cuts spliced, not a single offset)
 
   /** Jaccard similarity of word sets — fast, language-independent. */
   function wordJaccard(a, b) {
@@ -135,8 +155,51 @@
     return deltas[Math.floor(deltas.length / 2)];
   }
 
+  /**
+   * Estimate a single constant time-shift (refCut − srcCut) between two cue
+   * sets that share content but not enough exactly-matching lines for a
+   * piecewise map.  Uses a looser text match than buildAnchorMap and returns
+   * the median candidate delta — robust to the false matches the looser bar
+   * lets in — plus how tightly the samples agree.  Returns null when there are
+   * too few candidates or they don't cluster (i.e. it's not one clean shift,
+   * so a constant offset would be a lie).
+   */
+  function estimateGlobalOffset(srcCues, refCues, opts) {
+    const WINDOW = opts?.windowSec ?? DEFAULT_WINDOW_SEC;
+    const thr    = opts?.threshold ?? OFFSET_MATCH_THRESHOLD;
+    const refNorm = refCues.map(rc => ({ rc, txt: normalizeSubText(rc.text) }));
+    const deltas = [];
+    let winLo = 0;
+
+    for (const sc of srcCues) {
+      const sTxt = normalizeSubText(sc.text);
+      if (sTxt.length < MIN_CUE_CHARS) continue;
+      while (winLo < refNorm.length && refNorm[winLo].rc.start < sc.start - WINDOW) winLo++;
+      let bestScore = 0, bestRef = null;
+      for (let i = winLo; i < refNorm.length && refNorm[i].rc.start <= sc.start + WINDOW; i++) {
+        const score = wordJaccard(sTxt, refNorm[i].txt);
+        if (score > bestScore) { bestScore = score; bestRef = refNorm[i].rc; }
+      }
+      if (bestScore >= thr && bestRef) deltas.push(bestRef.start - sc.start);
+    }
+
+    if (deltas.length < OFFSET_MIN_SAMPLES) return null;
+    const sorted = deltas.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    const agreement = deltas.filter(d => Math.abs(d - median) <= OFFSET_CONSISTENCY_TOL).length / deltas.length;
+    if (agreement < OFFSET_MIN_AGREEMENT) return null;
+    return { offset: median, samples: deltas.length, agreement };
+  }
+
+  /** New cue array with every start/end shifted by a constant offset (seconds). */
+  function shiftCues(cues, offsetSec) {
+    if (!offsetSec) return cues.slice();
+    return cues.map(c => ({ ...c, start: c.start + offsetSec, end: c.end + offsetSec }));
+  }
+
   NS.CRSubFix.remaster = {
     MIN_ANCHORS,
     buildAnchorMap, interpolateTime, remasterCues, computeMedianDelta,
+    estimateGlobalOffset, shiftCues,
   };
 })();

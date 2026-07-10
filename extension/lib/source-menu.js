@@ -52,6 +52,7 @@
     localeLabels = {},
     onSelectLocale, onTurnOff,
     onSelectCustom, onLoadFile, onRemoveCustom, onAdjustSync, onExport,
+    onAdjustTiming, getAdjustTimingAction,
     onTranslate, getTranslateAction, onClearMt, getClearMtAction,
     onCancelTranslate, getCancelAction, onMtSettings, getMtSettingsAction,
     onSelectSecondary, getSecondary,
@@ -99,6 +100,18 @@
         return ep.jpGuid ? null : false;
       }
       return ep.catalog.availability(locale);
+    }
+
+    // Display label for a locale row.  Appends "(CC)" when the pick will serve
+    // the dub's own closed captions — the current audio's locale with a
+    // captions-sourced entry (urlFor's same-language policy in
+    // lib/subtitle-catalog.js) — mirroring CR's own "English (CC)" naming so
+    // dub watchers find the track they expect.
+    function localeRowLabel(ep, locale) {
+      const base  = localeLabels[locale] ?? locale;
+      const audio = ep?.catalog.currentAudio();
+      return (audio && audio !== 'ja-JP' && locale === audio &&
+              ep.catalog.captionSourced?.(audio, locale)) ? `${base} (CC)` : base;
     }
 
     function makeRow(label, isActive, hasContent, onClick, validation, locale) {
@@ -155,7 +168,10 @@
         row.addEventListener('mouseenter', () => { row.style.background = THEME.rowHover; });
         row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       }
-      row.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+      // "no subs" rows read as disabled — a click must not fire the select
+      // action (which would wipe the saved locale pref and swap the subs),
+      // but still swallow the event so the menu doesn't close underneath.
+      row.addEventListener('click', e => { e.stopPropagation(); if (!unavail) onClick(); });
       return row;
     }
 
@@ -503,6 +519,7 @@
         const audioHasSub = !!info.audioHasSub;
         const native      = info.native || '';
         const nativeLabel = localeLabels[native] ?? native;
+        const nativeAvail = info.nativeAvailable !== false;   // undefined (old caller) → assume available
         const cur         = getSecondary?.() || '';
         const primary     = ep.activeSource() ?? 'ja-JP';
 
@@ -519,8 +536,13 @@
         // below.  Only offered when it would actually do something.
         if (onApplyLearning && audio) {
           if (audioHasSub && audio !== native) {
+            // Only promise "with <your language> below" when it's actually on
+            // this episode; otherwise the tap gives the audio-language sub alone.
+            const sub = nativeAvail
+              ? `with ${nativeLabel} below`
+              : `${nativeLabel} isn’t on this episode — ${audioLabel} only`;
             menuEl.appendChild(makeSubtextRow('📚', `Match my audio — ${audioLabel}`,
-              `with ${nativeLabel} below`, () => { close(); onApplyLearning(native); }, true));
+              sub, () => { close(); onApplyLearning(native); }, true));
           } else if (!audioHasSub) {
             const note = document.createElement('div');
             note.textContent = `No ${audioLabel} subtitles on this episode to match the audio — pick a second language below.`;
@@ -537,7 +559,7 @@
         }, null, null));
         for (const v of ep.catalog.versions()) {
           if (v.locale === primary) continue;
-          const label = localeLabels[v.locale] ?? v.locale;
+          const label = localeRowLabel(ep, v.locale);
           menuEl.appendChild(makeRow(label, cur === v.locale, localeHasContent(ep, v.locale), () => {
             close(); onSelectSecondary?.(v.locale);
           }, null, null));
@@ -597,6 +619,10 @@
         if (cancelAction && onCancelTranslate) {
           menuEl.appendChild(makeActionRow(cancelAction.label, () => { close(); onCancelTranslate(); }));
         }
+        const timingAction = getAdjustTimingAction?.();
+        if (timingAction && onAdjustTiming) {
+          menuEl.appendChild(makeActionRow(timingAction.label, () => { close(); onAdjustTiming(); }));
+        }
         if (activeCustom && onAdjustSync) {
           menuEl.appendChild(makeActionRow('⚙ Adjust sync…', () => { close(); onAdjustSync(curLocale); }));
         }
@@ -617,7 +643,7 @@
       const customs   = ep.listCustomSources?.() ?? [];
       const curCustom = customs.find((c) => c.id === curLocale);
       const activeLabel = (on && curLocale)
-        ? (curCustom?.label || localeLabels[curLocale] || curLocale)
+        ? (curCustom?.label || localeRowLabel(ep, curLocale))
         : null;
       const learnInfo = (typeof getLearningInfo === 'function') ? (getLearningInfo() || {}) : {};
 
@@ -637,7 +663,7 @@
       list.style.scrollbarColor = 'rgba(255,255,255,0.28) transparent';
 
       for (const v of ep.catalog.versions()) {
-        const label      = localeLabels[v.locale] ?? v.locale;
+        const label      = localeRowLabel(ep, v.locale);
         const isActive   = on && (curLocale === v.locale);
         const hasContent = localeHasContent(ep, v.locale);
         // Catalog owns both the version list and per-locale validation status.
@@ -664,7 +690,7 @@
       if (onApplyLearning || onSelectSecondary) {
         const cur = getSecondary?.() || '';
         const secCustom = customs.find((c) => c.id === cur);
-        const secLabel  = cur ? (secCustom?.label || localeLabels[cur] || cur) : '';
+        const secLabel  = cur ? (secCustom?.label || localeRowLabel(ep, cur)) : '';
         menuEl.appendChild(makeSubtextRow('📚', 'Learning mode',
           secLabel ? `Second subtitle: ${secLabel}` : 'Show two subtitles for study',
           () => { view = 'learn'; buildContent(menuEl); }, true));

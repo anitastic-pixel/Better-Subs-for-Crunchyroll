@@ -15,6 +15,7 @@
  *   CRSubFix.playbackApi.EN_LOCALES                 → ['en-US','en-GB','en']
  *   CRSubFix.playbackApi.entryUrl(entry)            → url string | null
  *   CRSubFix.playbackApi.subtitleMap(data)          → { [locale]: url }
+ *   CRSubFix.playbackApi.captionLocales(data)       → [locale] sourced from captions
  *   CRSubFix.playbackApi.pickEn(rawCaptionsOrSubs)  → best English url | null
  *   CRSubFix.playbackApi.jpVersion(data)            → ja-JP version obj | null
  *   CRSubFix.playbackApi.audioVersions(data)        → [{ locale, guid }]
@@ -50,6 +51,19 @@
     return map;
   }
 
+  // Locales whose entry in this response came from `captions` — the CC track,
+  // a full transcript of the SPOKEN audio — as opposed to `subtitles` (often
+  // signs-only for a dub's own language).  This provenance drives the
+  // catalog's same-language priority: a dub's own CC beats the JP session's
+  // translated track (see urlFor in lib/subtitle-catalog.js).
+  function captionLocales(data) {
+    const out = [];
+    for (const [loc, entry] of Object.entries(data?.captions ?? {})) {
+      if (entryUrl(entry)) out.push(loc);
+    }
+    return out;
+  }
+
   // Best English URL from a raw captions/subtitles object (not the merged map),
   // trying regional variants in order.  Returns null if none present.
   function pickEn(rawMap) {
@@ -78,5 +92,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, pickEn, jpVersion, audioVersions };
+  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions };
 })();

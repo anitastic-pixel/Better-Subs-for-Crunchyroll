@@ -82,7 +82,7 @@
   const { parseSubtitles, normalizeSubText, applyAlpha } = PARSER;
   const { escapeHtml } = UI;
   const { hexToRgba } = CUE_STYLE;
-  const { buildAnchorMap, remasterCues, computeMedianDelta, MIN_ANCHORS } = REMASTER;
+  const { buildAnchorMap, remasterCues, computeMedianDelta, estimateGlobalOffset, shiftCues, MIN_ANCHORS } = REMASTER;
   // Custom source: identity + record construction (lib/custom-source.js), the
   // timing model (lib/sub-sync.js), and the typeset-signs projection
   // (lib/sign-track.js).  This file keeps the DOM wiring, fetching, and the
@@ -284,7 +284,7 @@
           const am = url.match(/\/([a-z0-9]{12,})\/\d+\/?(?:[^/]*)?$/i) || url.match(/([a-z0-9]{16,})/i);
           const asset = am ? am[1] : '';
           out.push('asset: ' + (asset || '(none)'));
-          let off = 0; try { off = getSyncOffset(); } catch (_) {}
+          let off = 0; try { off = priOffset(); } catch (_) {}
           const active = (ep.cuesAt(v.currentTime, off) || []).filter((c) => c.pos);
           out.push('-- parsed signs on screen --');
           for (const c of active) out.push(`  "${(c.text || '').replace(/\s+/g, ' ').slice(0, 30)}" frz=${c.frz} frx=${c.frx} fry=${c.fry} fax=${c.fax} fay=${c.fay} fscx=${c.fscx} fscy=${c.fscy} an=${c.alignment} pos=${c.pos ? c.pos.x + ',' + c.pos.y : '-'}`);
@@ -354,6 +354,7 @@
     'it-IT': 'Italiano',          'ru-RU': 'Русский',
     'ar-ME': 'العربية',            'ar-SA': 'العربية (SA)',
     'zh-CN': '中文 (简)',           'zh-TW': '中文 (繁)',
+    'zh-HK': '中文 (港)',
     'hi-IN': 'हिंदी',             'ko-KR': '한국어',
     'pl-PL': 'Polski',            'tr-TR': 'Türkçe',
     'nl-NL': 'Nederlands',        'fi-FI': 'Suomi',
@@ -369,7 +370,7 @@
     'es-419':'ES','es-ES':'ES','ca-ES':'CA',
     'fr-FR':'FR','pt-BR':'PT','pt-PT':'PT','it-IT':'IT',
     'ru-RU':'RU','ar-ME':'AR','ar-SA':'AR',
-    'zh-CN':'ZH','zh-TW':'ZH','hi-IN':'HI','ko-KR':'KO',
+    'zh-CN':'ZH','zh-TW':'ZH','zh-HK':'ZH','hi-IN':'HI','ko-KR':'KO',
     'pl-PL':'PL','tr-TR':'TR','nl-NL':'NL','fi-FI':'FI',
     'sv-SE':'SV','nb-NO':'NO','da-DK':'DA','cs-CZ':'CS',
     'ro-RO':'RO','hu-HU':'HU','ms-MY':'MS','th-TH':'TH',
@@ -472,6 +473,9 @@
     onLoadFile:      ()       => promptLoadFile(),
     onRemoveCustom:  (id)     => removeCustomSource(id),
     onAdjustSync:    (id)     => openSyncPanel(id),
+    // Per-track timing nudge — available whenever subtitles are showing.
+    onAdjustTiming:  ()       => openTimingPanel(),
+    getAdjustTimingAction: () => overlayActive ? { label: '⏱ Adjust timing…' } : null,
     onExport:        ()       => exportActiveCustom().catch(e => log.warn('Export error:', e)),
     // One-click translate using the saved target/source (+ popup provider) — no
     // re-picking once you're comfortable with your choices.
@@ -547,9 +551,12 @@
 
   // storeSessionSubs is the most-called catalog op below; route through the
   // current Episode's catalog so the matrix lives with the right viewing.
-  const storeSessionSubs = (audioLocale, subs) => {
+  // ccLocales (optional) = which entries came from the session's `captions`
+  // map — the provenance urlFor needs to serve a dub's own CC (see
+  // lib/subtitle-catalog.js).
+  const storeSessionSubs = (audioLocale, subs, ccLocales) => {
     const ep = currentEp();
-    if (ep) ep.catalog.recordSession(audioLocale, subs);
+    if (ep) ep.catalog.recordSession(audioLocale, subs, ccLocales);
   };
 
   // ── Wrong-title detection + recovery (lib/wrong-title.js) ────────────────
@@ -727,6 +734,10 @@
     if (!ep) return;
     const wasActive = ep.activeSource() === id;
     ep.removeCustomSource(id);
+    // If it was the second subtitle, drop that too — the band must not keep
+    // rendering a deleted record, and the persisted pref would go phantom on
+    // the next episode.
+    if (getSecondaryPref() === id) selectSecondary('');
     if (wasActive) {
       if (overlayActive) { setOverlayActive(false); stopSync(); }
       ep.setActiveSource(null);
@@ -1018,6 +1029,116 @@
     setTimeout(() => document.addEventListener('keydown', _syncEscHandler), 0);
   }
 
+  // ── Per-track timing panel (⏱ Adjust timing) ──────────────────────────────
+  // Nudge the primary and/or secondary band independently — the fix for two
+  // tracks that drift relative to each other (e.g. a remastered JP-source
+  // primary vs a natively-timed CC secondary), which the single global offset
+  // can't separate.  Edits the per-episode _timing deltas live.
+  const TIMING_PANEL_ID = 'cr-bsub-timing-panel';
+  let _timingEscHandler = null;
+  function closeTimingPanel() {
+    document.getElementById(TIMING_PANEL_ID)?.remove();
+    if (_timingEscHandler) { document.removeEventListener('keydown', _timingEscHandler); _timingEscHandler = null; }
+  }
+  function openTimingPanel() {
+    const ep = currentEp();
+    if (!ep || !videoEl || !overlayActive) return;
+    syncTimingForEp(ep);
+    closeTimingPanel();
+
+    let target = 'pri';                         // 'pri' | 'sec' | 'both'
+    const hasSecondary = () => ep.secondaryCues.length > 0;
+    if (!hasSecondary() && target === 'sec') target = 'pri';
+    const clamp = (v) => Math.max(-30, Math.min(30, Math.round(v * 10) / 10));
+    const fmt   = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}s`;
+
+    function apply() {
+      saveTimingDeltas();
+      if (overlayActive) { renderer.invalidate(); onTimeUpdate(); }
+      refresh();
+    }
+    function nudge(step) {
+      if (target === 'pri' || target === 'both') _timing.pri = clamp(_timing.pri + step);
+      if (target === 'sec' || target === 'both') _timing.sec = clamp(_timing.sec + step);
+      apply();
+    }
+    function reset() {
+      if (target === 'pri' || target === 'both') _timing.pri = 0;
+      if (target === 'sec' || target === 'both') _timing.sec = 0;
+      apply();
+    }
+
+    const panel = document.createElement('div');
+    panel.id = TIMING_PANEL_ID;
+    Object.assign(panel.style, panelStyle({
+      position: 'absolute', zIndex: '2147483646', padding: '12px 14px', width: '300px',
+    }));
+    panel.innerHTML =
+      `<div style="font-size:13px;font-weight:700;color:${THEME.accent};margin-bottom:2px;">Adjust timing</div>` +
+      `<div style="font-size:11px;color:#9aa;line-height:1.4;margin-bottom:10px;">` +
+        `Nudge a subtitle earlier or later to match the audio. Negative = show sooner.</div>` +
+      `<div data-row="target" style="display:flex;gap:6px;margin-bottom:10px;"></div>` +
+      `<div data-row="read" style="font-size:12px;color:#9ecbff;margin-bottom:8px;"></div>` +
+      `<div data-row="nudge" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"></div>` +
+      `<div data-row="foot" style="display:flex;align-items:center;gap:8px;justify-content:flex-end;"></div>`;
+
+    const tgtPri  = syncBtn('Sub 1');
+    const tgtSec  = syncBtn('Sub 2');
+    const tgtBoth = syncBtn('Both');
+    const readout = document.createElement('span');
+    const minus   = syncBtn('−0.1s');
+    const plus    = syncBtn('+0.1s');
+    const hint    = document.createElement('span'); hint.textContent = 'hold ⇧ for 0.5s';
+    hint.style.cssText = 'font-size:10px;color:#888;margin-left:auto;';
+    const resetB  = syncBtn('Reset');
+    const doneB   = syncBtn('Done', true);
+
+    panel.querySelector('[data-row="target"]').append(tgtPri, tgtSec, tgtBoth);
+    panel.querySelector('[data-row="read"]').append(readout);
+    panel.querySelector('[data-row="nudge"]').append(minus, plus, hint);
+    panel.querySelector('[data-row="foot"]').append(resetB, doneB);
+
+    function styleTargetBtn(btn, on, enabled) {
+      btn.disabled = !enabled;
+      btn.style.opacity = enabled ? '1' : '0.4';
+      btn.style.cursor  = enabled ? 'pointer' : 'default';
+      btn.style.background = on ? THEME.accent : 'transparent';
+      btn.style.color      = on ? THEME.accentText : THEME.text;
+      btn.style.borderColor = on ? THEME.accent : THEME.panelEdge;
+    }
+    function refresh() {
+      const sec = hasSecondary();
+      styleTargetBtn(tgtPri,  target === 'pri',  true);
+      styleTargetBtn(tgtSec,  target === 'sec',  sec);
+      styleTargetBtn(tgtBoth, target === 'both', sec);
+      readout.innerHTML = sec
+        ? `Sub 1 <b style="color:#fff;">${fmt(_timing.pri)}</b> &nbsp;·&nbsp; Sub 2 <b style="color:#fff;">${fmt(_timing.sec)}</b>`
+        : `Sub 1 <b style="color:#fff;">${fmt(_timing.pri)}</b>`;
+    }
+
+    const pick = (t) => () => { target = t; refresh(); };
+    tgtPri.addEventListener('click',  pick('pri'));
+    tgtSec.addEventListener('click',  () => { if (hasSecondary()) { target = 'sec'; refresh(); } });
+    tgtBoth.addEventListener('click', () => { if (hasSecondary()) { target = 'both'; refresh(); } });
+    minus.addEventListener('click', (e) => nudge(e.shiftKey ? -0.5 : -0.1));
+    plus.addEventListener('click',  (e) => nudge(e.shiftKey ? +0.5 : +0.1));
+    resetB.addEventListener('click', reset);
+    doneB.addEventListener('click', closeTimingPanel);
+    refresh();
+
+    const mountTarget = document.fullscreenElement ?? videoEl.parentElement ?? document.body;
+    if (mountTarget !== document.body && window.getComputedStyle(mountTarget).position === 'static') {
+      mountTarget.style.position = 'relative';
+    }
+    mountTarget.appendChild(panel);
+    panel.style.left = '50%';
+    panel.style.bottom = '14%';
+    panel.style.transform = 'translateX(-50%)';
+
+    _timingEscHandler = (e) => { if (e.key === 'Escape') closeTimingPanel(); };
+    setTimeout(() => document.addEventListener('keydown', _timingEscHandler), 0);
+  }
+
   // ── Machine translation (BYOK) ────────────────────────────────────────────
   // The MAIN world can't reach the service worker, so translation rides a
   // token-guarded RPC over postMessage: interceptor → content.js → SW → DeepL.
@@ -1283,8 +1404,10 @@
     if (!dead) return false;
     try {
       if (sessionStorage.getItem('crSubFix_mt_reloaded')) return false;
-      sessionStorage.setItem('crSubFix_mt_reloaded', '1');
-    } catch (_) {}
+    } catch (_) { return false; }
+    // If the once-per-tab-session guard can't persist (storage full/blocked),
+    // reloading could loop — skip the reload, mirroring crSubFix_reloaded_*.
+    if (!STORAGE.ssSet('crSubFix_mt_reloaded', '1')) return false;
     STORAGE.lsSet('crSubFix_mt_resume_' + ep.guid, { target, provider, source }, 5 * 60 * 1000);
     log.warn('Translate: extension↔worker bridge dead — reloading to recover (resume flagged).');
     try { hud.html('<span style="color:#ffc107;">⟳</span>  Reconnecting — reloading the page…', 4000); } catch (_) {}
@@ -1593,6 +1716,20 @@
       hud.html(`<span style="color:#e55;">⚠</span>  Auto-sync unavailable${reason}`, 6000);
       return;
     }
+    // Approximate constant-shift fallback (couldn't build a precise piecewise
+    // map) — be honest that it's an estimate, not validated coverage.
+    if (stats.approx) {
+      const d = stats.medianDelta;
+      const dStr = d != null ? `${d >= 0 ? '+' : ''}${d.toFixed(1)}s` : '';
+      hud.html(
+        `<div style="color:${THEME.accent};font-weight:700;">✓  Subtitles shifted ${dStr}</div>` +
+        `<div style="color:rgba(255,255,255,0.45);font-size:10px;margin-top:2px;">` +
+          `approximate — estimated from ${stats.count} matching lines` +
+        `</div>`,
+        7000
+      );
+      return;
+    }
 
     const cached     = stats.cached ? ' · cached' : '';
     const deltaStr   = stats.medianDelta != null
@@ -1606,6 +1743,27 @@
       `</div>`,
       7000
     );
+  }
+
+  // When the primary is a cross-session track (the JP-source translation on a
+  // dub) that could NOT be exactly synced — remaster bailed, or fell back to an
+  // approximate constant shift — and the dub carries its own natively-timed CC,
+  // offer a one-tap switch to that CC for exact timing.  One nudge per episode.
+  const _exactSyncOffered = new Set();
+  function maybeOfferExactSync(appliedOffset) {
+    const ep = currentEp();
+    if (!ep) return;
+    const audio = ep.catalog.currentAudio();
+    if (!audio || audio === 'ja-JP') return;            // subs need no remaster
+    if (ep.activeSource() === audio) return;            // already on the dub's own track
+    if (!ep.catalog.captionSourced?.(audio, audio)) return;  // no native CC to offer
+    if (_exactSyncOffered.has(ep.guid)) return;
+    _exactSyncOffered.add(ep.guid);
+    const label = LOCALE_LABELS[audio] ?? audio;
+    const msg = appliedOffset
+      ? `Subtitles auto-shifted ~${Math.abs(appliedOffset).toFixed(1)}s to fit this dub.`
+      : `These subtitles may be out of sync with this dub.`;
+    showErrorToast(`${msg} For exact timing:`, () => selectSource(audio), `Use ${label} (CC)`);
   }
 
   // ── Master remaster orchestrator ──────────────────────────────────────────
@@ -1732,7 +1890,25 @@
         showRemasterBadge(true, { sameFile: true });
         return;
       }
+      // Precise piecewise anchoring failed — but the two cuts may still differ
+      // by a single constant shift (e.g. a dub whose CC is a different English
+      // script than the JP-source sub, so lines rarely word-match, yet the dub
+      // just adds a few seconds of lead-in).  Recover that one offset from a
+      // coarse, outlier-robust match and shift the whole track rather than
+      // showing it at raw (wrong) timing.
+      const est = estimateGlobalOffset(srcBridgeCues, refBridgeCues);
+      if (est && Math.abs(est.offset) >= 0.5) {
+        ep.setRemasteredCues(shiftCues(cues, est.offset), audioLocale);
+        renderer.invalidate();
+        onTimeUpdate();
+        refreshButtonLabel();
+        showRemasterBadge(true, { approx: true, medianDelta: est.offset, count: est.samples });
+        log.info(`Remaster: global-offset fallback · shift ${est.offset.toFixed(2)}s · ${est.samples} samples · ${Math.round(est.agreement * 100)}% agree · [${srcSession}→${audioLocale}] via ${bridge}`);
+        maybeOfferExactSync(est.offset);
+        return;
+      }
       showRemasterBadge(false, { reason: `Too few anchors (${anchorMap.length}/${MIN_ANCHORS} required)` });
+      maybeOfferExactSync(null);
       return;
     }
 
@@ -1771,6 +1947,38 @@
   const getSubScale            = () => SETTINGS.read(html, 'subScale');
   const getSyncOffset          = () => SETTINGS.read(html, 'subOffset');
   const getSubBottomFloor      = () => SETTINGS.read(html, 'subBottomFloor');
+
+  // ── Per-track manual timing nudge ──────────────────────────────────────────
+  // The global `subOffset` setting shifts BOTH subtitle bands together — useless
+  // when the primary and secondary drift relative to each other (e.g. a
+  // remastered JP-source primary vs a natively-timed CC secondary).  These
+  // deltas layer on top of subOffset, per band.  Timing drift is
+  // episode-specific, so they persist per guid (like anchor maps), not as a
+  // cross-episode setting.  Edited via the ⏱ Adjust-timing panel.
+  let _timing     = { pri: 0, sec: 0 };
+  let _timingGuid = null;
+  const TIMING_TTL = 30 * 24 * 60 * 60 * 1000;
+  const timingKey  = (guid) => 'crSubFix_timing_' + guid;
+  function loadTimingDeltas(guid) {
+    _timingGuid = guid;
+    let v = null; try { v = STORAGE.lsGet(timingKey(guid)); } catch (_) {}
+    _timing = { pri: (v && +v.pri) || 0, sec: (v && +v.sec) || 0 };
+  }
+  function saveTimingDeltas() {
+    if (!_timingGuid) return;
+    try {
+      if (_timing.pri || _timing.sec) STORAGE.lsSet(timingKey(_timingGuid), { pri: _timing.pri, sec: _timing.sec }, TIMING_TTL);
+      else STORAGE.lsDel(timingKey(_timingGuid));
+    } catch (_) {}
+  }
+  // Reload the per-episode deltas when the active episode changes (cheap guard
+  // in the render hot path).
+  function syncTimingForEp(ep) {
+    if (ep && _timingGuid !== ep.guid) loadTimingDeltas(ep.guid);
+  }
+  const priOffset = () => { let g = 0; try { g = getSyncOffset(); } catch (_) {} return g + _timing.pri; };
+  const secOffset = () => { let g = 0; try { g = getSyncOffset(); } catch (_) {} return g + _timing.sec; };
+
   const isAutoPauseLine        = () => SETTINGS.read(html, 'autoPauseLine');
   const getSecondarySignGap    = () => SETTINGS.read(html, 'secondarySignGap');
   // Per-layer visibility ("Show on screen").  Default true; gate the primary
@@ -1920,7 +2128,9 @@
   function teardownPageChrome() {
     if (videoEl) videoEl.removeEventListener('play', tryAutoActivate);
     stopSync();
-    overlayActive    = false;
+    // Through the wrapper so content.js gets a SIGN_ASS clear — a bare write
+    // leaves libass rendering the outgoing episode's typeset signs.
+    setOverlayActive(false);
     clickInProgress  = false;
     videoEl          = null;
     buttonInControls = false;
@@ -1934,6 +2144,7 @@
     closeSyncPanel();
     closeTranslatePanel();
     closeTypesetTunePanel();
+    closeTimingPanel();
     sourceMenu.removeButton();
     renderer.unmount();
     document.getElementById(BTN_ID)?.remove();
@@ -2182,9 +2393,15 @@
       const ep = currentEp();
       if (!ep || ep.disposed) { setPendingActivate(false); return; }
 
-      const auth = ep.authHeaders ?? ep.capturedAuth ?? null;
+      // authHeaders initializes to {} (never null), so `??` could never fall
+      // through to capturedAuth — and an empty header set means the self-
+      // triggered fetch went out unauthenticated and got a guaranteed 401.
+      const hasKeys = (o) => !!o && Object.keys(o).length > 0;
+      const auth = hasKeys(ep.authHeaders) ? ep.authHeaders
+                 : hasKeys(ep.capturedAuth) ? ep.capturedAuth : null;
       if (!auth) {
         log.info('Queue resolver: no captured auth yet — staying queued.');
+        scheduleQueueResolver();   // re-arm; auth usually lands within seconds
         return;
       }
 
@@ -2370,17 +2587,26 @@
       }
     }
 
-    const resp = await originalFetch(
-      `https://www.crunchyroll.com/playback/v3/${jpGuid}/web/chrome/play`,
-      { credentials: 'include', headers: authHeaders }
-    );
+    // Soft-fail contract (same as fetchSubUrlForSource): callers await this in
+    // paths that must not reject — a thrown rejection would permanently stick
+    // the button-click latch (clickInProgress) and the translate HUD.
+    let data;
+    try {
+      const resp = await originalFetch(
+        `https://www.crunchyroll.com/playback/v3/${jpGuid}/web/chrome/play`,
+        { credentials: 'include', headers: authHeaders }
+      );
 
-    if (!resp.ok) {
-      log.warn(`JP session fetch failed (${resp.status}).`);
+      if (!resp.ok) {
+        log.warn(`JP session fetch failed (${resp.status}).`);
+        return { captionUrl: null, subtitleUrl: null, jpRow: {}, fetchFailed: true };
+      }
+
+      data = await resp.json();
+    } catch (err) {
+      log.warn('JP session fetch error:', err);
       return { captionUrl: null, subtitleUrl: null, jpRow: {}, fetchFailed: true };
     }
-
-    const data = await resp.json();
     if (data.token) releaseSession(jpGuid, data.token, authHeaders);
 
     const captionUrl  = PLAYBACK.pickEn(data.captions);
@@ -2430,7 +2656,7 @@
 
       // Store the complete row in the catalog indexed by this session's audio locale.
       const sessionAudio = data.audioLocale ?? targetLocale;
-      storeSessionSubs(sessionAudio, sessionSubs);
+      storeSessionSubs(sessionAudio, sessionSubs, PLAYBACK.captionLocales(data));
       log.info(`${sessionAudio} session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       const url = sessionSubs[targetLocale] ?? null;
@@ -2567,8 +2793,10 @@
 
   // ── Dual subtitles (secondary track) ──────────────────────────────────────
   // A second locale shown alongside the primary, chosen from the ▾ menu's
-  // "Second subtitle" picker and persisted across episodes.  Same timeline as
-  // the primary (both come from the JP session row), so no remaster is needed.
+  // "Second subtitle" picker and persisted across episodes.  Tracks resolve via
+  // the catalog's urlFor: usually the JP session row (same timeline as the
+  // primary), or the dub's own CC for a same-language pick (natively timed to
+  // the playing cut) — no remaster either way.
   const SECONDARY_PREF_KEY = 'crSubFix_secondary';
   const getSecondaryPref = () => { try { return localStorage.getItem(SECONDARY_PREF_KEY) || ''; } catch (_) { return ''; } };
   function setSecondaryPref(loc) {
@@ -2576,7 +2804,10 @@
   }
   // Lazily (re)load the secondary track when the pref, the Episode, or the
   // primary source changes.  Cheap no-op once in the desired state.  A secondary
-  // equal to the active primary is dropped (no duplicate band).
+  // that duplicates the active primary is dropped (no duplicate band) — both by
+  // key (the default primary is normalized to 'ja-JP', matching the menu) and
+  // by resolved URL, since a locale pick can resolve to the very file the
+  // primary renders (e.g. same-language picks on a dub session without a CC).
   let _secState = { guid: null, want: null, primary: null };
   // Bounded-retry guard for the async secondary fetch.  _secState is committed
   // synchronously (so we never run two fetches for the same target at once), but
@@ -2591,8 +2822,20 @@
   }
   function maybeLoadSecondary(ep) {
     const want    = getSecondaryPref();
-    const primary = ep.activeSource() || '';
-    if (_secState.guid === ep.guid && _secState.want === want && _secState.primary === primary) return;
+    // null = the default JP-session source — normalize so `want === primary`
+    // catches a 'ja-JP' secondary against the default primary (the menu
+    // normalizes the same way when it excludes the primary from the list).
+    const primary = ep.activeSource() ?? 'ja-JP';
+    if (_secState.guid === ep.guid && _secState.want === want && _secState.primary === primary) {
+      // A committed duplicate-drop (dupBase) holds only while `want` still
+      // resolves to the dropped file.  The catalog can grow under an unchanged
+      // guid/want/primary key — a JP-first race or an in-place dub switch
+      // records the dub's CC row later — and the band must load then.
+      if (!_secState.dupBase) return;
+      const nowUrl = want === 'ja-JP' ? (ep.jpCaptionUrl || ep.jpSubtitleUrl) : getSubtitleUrl(want);
+      if (!nowUrl || subUrlBase(nowUrl) === _secState.dupBase) return;
+      // fall through — `want` now resolves to a different file; re-evaluate
+    }
     const prev = _secState;
     _secState = { guid: ep.guid, want, primary };
     if (!want || want === primary) { ep.setSecondaryCues([]); setSecondaryRaw(null); renderer.invalidate(); return; }
@@ -2620,8 +2863,25 @@
     fetchCuesForLocale(ep, want).then((r) => {
       if (ep.disposed || currentEp() !== ep) return;
       if (getSecondaryPref() !== want) return;        // changed again mid-fetch
+      // Primary may have been switched to `want` while the fetch was in
+      // flight — committing would double every line, and the memo key would
+      // then read as satisfied and never re-evaluate.
+      if (want === (ep.activeSource() ?? 'ja-JP')) { ep.setSecondaryCues([]); setSecondaryRaw(null); renderer.invalidate(); return; }
       const cues = r?.cues ?? [];
       if (!cues.length) { ep.setSecondaryCues([]); setSecondaryRaw(null); retryOrGiveUp(); renderer.invalidate(); return; }
+      // The pick resolved to the very file the primary is rendering — showing
+      // it again would just double every line.  Drop it, but remember WHICH
+      // file was dropped (dupBase): the memo check at the top of this function
+      // re-opens the state the moment `want` resolves to a different file.
+      // A successful fetch also wipes the failure budget.
+      if (r.url && ep.activeSubUrl && subUrlBase(r.url) === subUrlBase(ep.activeSubUrl)) {
+        _secFail = { key: null, tries: 0 };
+        if (_secState.guid === ep.guid && _secState.want === want) {
+          _secState = { ..._secState, dupBase: subUrlBase(r.url) };
+        }
+        ep.setSecondaryCues([]); setSecondaryRaw(null); renderer.invalidate();
+        return;
+      }
       _secFail = { key: null, tries: 0 };
       ep.setSecondaryCues(cues);
       setSecondaryRaw(r?.rawText || null);             // for the "Signs" selector
@@ -2671,15 +2931,32 @@
   // What the "Learning mode" submenu shows: the episode's audio language and
   // whether a subtitle in that language exists on this episode (else the menu
   // tells the user it can't match the audio).
+  // Subtitle availability for a locale on this episode (availability() is
+  // false only when there's neither a URL nor a session guid to fetch one
+  // from; ja-JP is owned by the JP-first fetch, mirroring the menu's
+  // localeHasContent).
+  function localeHasSub(ep, loc) {
+    if (!ep || !loc) return false;
+    if (loc === 'ja-JP') return !!(ep.jpCaptionUrl || ep.jpSubtitleUrl || ep.jpGuid);
+    return ep.catalog.availability(loc) !== false;
+  }
+
   function learningInfo() {
     const ep = currentEp();
     const audio = ep ? ep.catalog.currentAudio() : null;
-    const hasSub = !!(ep && audio && ep.catalog.versions().some(v => v.locale === audio));
+    // Subtitle availability, not dub presence: versions() lists every audio
+    // dub, so checking it was vacuously true for the playing dub and the
+    // "can't match your audio" fallback could never render.
+    const hasSub = !!(ep && audio && localeHasSub(ep, audio));
+    const native = getNativePref();
     return {
       audioLocale: audio || '',
       audioLabel:  audio ? audioLabel(audio) : '',   // ja-JP audio = "Japanese", not the sub-row label
       audioHasSub: hasSub,
-      native:      getNativePref(),
+      native,
+      // Whether the viewer's language is actually on THIS episode — so the CTA
+      // doesn't promise a second band ("with Deutsch below") that can't load.
+      nativeAvailable: !!(ep && native && localeHasSub(ep, native)),
     };
   }
 
@@ -2689,7 +2966,10 @@
     if (nativeLocale) setNativePref(nativeLocale);
     const native  = nativeLocale || getNativePref();
     const audio   = ep.catalog.currentAudio();
-    const locales = ep.catalog.versions().map((v) => v.locale);
+    // planLearningMode expects SUBTITLE locales; filter the version list down
+    // to what's actually pickable so the audio-match promise is honest.
+    const locales = ep.catalog.versions().map((v) => v.locale)
+      .filter((l) => localeHasSub(ep, l));
     const plan    = LEARN.planLearningMode({ audioLocale: audio, locales, native });
     markLearnHintSeen();   // an explicit pick means the feature's been found
     // Set the primary first (it (re)activates the overlay), then the secondary,
@@ -2697,7 +2977,13 @@
     if (plan.primary) selectSource(plan.primary);
     selectSecondary(plan.secondary || '');
     if (plan.audioMatched) {
-      log.info(`Learning mode: primary=[${plan.primary}] secondary=[${plan.secondary}].`);
+      log.info(`Learning mode: primary=[${plan.primary}] secondary=[${plan.secondary}] nativeAvail=${plan.nativeAvailable}.`);
+      // Audio matched but the viewer's language isn't on this episode — the
+      // stack degrades to the spoken-language sub alone; say so instead of
+      // leaving them wondering where the second band went.
+      if (!plan.nativeAvailable && native) {
+        UI.showToast({ host: toastHost(), text: `${LOCALE_LABELS[native] ?? native} isn't available on this episode — showing ${audioLabel(audio)} only`, duration: 4000 });
+      }
     } else {
       log.info(`Learning mode: no audio-matched sub (audio=[${audio || '?'}]) — primary=[${plan.primary}].`);
       if (audio && !locales.includes(audio)) {
@@ -2753,10 +3039,12 @@
     const ep = currentEp();
     if (!ep) return;
     maybeLoadSecondary(ep);
-    const offset = getSyncOffset();
+    syncTimingForEp(ep);
+    const offset  = priOffset();          // primary band (dialogue + signs)
+    const secOff  = secOffset();          // secondary band, nudged independently
     const t = videoEl.currentTime;
     const priAll = ep.cuesAt(t, offset);
-    const secAll = ep.secondaryCues.length ? ep.secondaryCuesAt(t, offset) : [];
+    const secAll = ep.secondaryCues.length ? ep.secondaryCuesAt(t, secOff) : [];
     // isShowDialogue() hides just the primary spoken-line band (signs + the
     // secondary track keep their own visibility).  With dialogue hidden there's
     // no line on screen, so study auto-pause below naturally won't fire.
@@ -2795,7 +3083,8 @@
     if (!ep || !videoEl) return;
     const cues = ep.remasteredCues ?? ep.originalCues;
     if (!cues || !cues.length) return;
-    const offset = getSyncOffset();
+    syncTimingForEp(ep);
+    const offset = priOffset();
     const now = videoEl.currentTime + offset;
     let target = cues[0].start;
     for (let i = cues.length - 1; i >= 0; i--) {
@@ -2811,7 +3100,8 @@
   async function copyActiveLine() {
     const ep = currentEp();
     if (!ep || !videoEl) return;
-    const offset = getSyncOffset();
+    syncTimingForEp(ep);
+    const offset = priOffset();
     const text = ep.cuesAt(videoEl.currentTime, offset)
       .filter((c) => !c.pos)
       .map((c) => c.text)
@@ -2874,6 +3164,7 @@
     closeSyncPanel();
     closeTranslatePanel();
     closeTypesetTunePanel();
+    closeTimingPanel();
     const fsEl = document.fullscreenElement;
     renderer.reparentForFullscreen(fsEl);
 
@@ -2930,7 +3221,7 @@
   // without navigating to the button.  Auto-dismisses after 10 s.  Only
   // one toast at a time: dropping a fresh error replaces any pending one.
   let _errorToast = null;
-  function showErrorToast(text, onRetry) {
+  function showErrorToast(text, onRetry, actionLabel) {
     if (_errorToast) { try { _errorToast.remove(); } catch (_) {} _errorToast = null; }
     const host = toastHost();
     if (!host) return;
@@ -2963,7 +3254,7 @@
     const span = document.createElement('span');
     span.textContent = text;
     const btn = document.createElement('button');
-    btn.textContent = 'Retry';
+    btn.textContent = actionLabel || 'Retry';
     Object.assign(btn.style, {
       background:   THEME.accent,
       color:        THEME.accentText,
@@ -3195,11 +3486,17 @@
 
       const replacement = await tryAlternateSession(lang);
       if (replacement) {
+        const badUrl = url;
         cues = replacement.cues;
         url  = replacement.url;
         ep.setOriginalCues(cues);
         ep.setCachedRawText(url, ep.getCachedRawText(url) ?? '');
         ep.catalog.setValidation(lang, 'ok');
+        // Point the catalog at the good copy too: otherwise the next playback
+        // response computes urlFor() from the stale bad URL, sees it differ
+        // from what's loaded, and the "Audio changed → reloading" block
+        // bounces between the two on every playback refresh.
+        ep.catalog.replaceUrl(lang, badUrl, url);
         log.info(
           `Sub validation: replaced [${lang}] with copy from [${replacement.fromSession}] session.`
         );
@@ -3725,7 +4022,7 @@
     // Tear down any suppression bound to the outgoing video (overlay- or
     // "hide official"-driven) before we repoint videoEl at the new one.
     subSuppression.deactivate();
-    overlayActive   = false;
+    setOverlayActive(false);   // wrapper → SIGN_ASS clear reaches content.js
     currentEp()?.clearCues();
     movedToControls = false;
     stopSync();
@@ -4063,6 +4360,11 @@
     // Bail if navigation disposed the Episode while waiting on the network.
     if (ep.disposed) return response;
 
+    // Error responses (401/420/429/…) carry JSON error envelopes, not playback
+    // data — parsing one would poison currentAudio (clearing a live remaster)
+    // and read as "no ja-JP version".  The page gets the response either way.
+    if (!response.ok) return response;
+
     try {
       const data = await response.clone().json();
 
@@ -4070,6 +4372,15 @@
       ep.setCurrentAudio(data.audioLocale ?? null);
       const currentAudio = ep.catalog.currentAudio();
       updateActiveInfo();
+
+      // Record this session's subtitle rows (with captions provenance) BEFORE
+      // any early return below: a dub response whose `versions` omits ja-JP
+      // (CR does this for some dub variants) still carries the dub's own
+      // captions/subtitles — including the CC — and urlFor + the cross-dub
+      // carry depend on the row being present.
+      const sessionSubs = PLAYBACK.subtitleMap(data);
+      storeSessionSubs(currentAudio, sessionSubs, PLAYBACK.captionLocales(data));
+      log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       const jpVersion = PLAYBACK.jpVersion(data);
       if (!jpVersion) {
@@ -4095,12 +4406,6 @@
       ep.setMappedJpGuid(jpVersion.guid);
       ep.setAuthHeaders(authHdrs);
       if (!ep.jpGuid) ep.setJpGuid(jpVersion.guid);
-
-      const sessionSubs = PLAYBACK.subtitleMap(data);
-
-      // Store ALL subtitle URLs from this session into the catalog row for this audio locale.
-      storeSessionSubs(currentAudio, sessionSubs);
-      log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       // Race-condition fix: JP-first may have activated the overlay before this
       // audio session's subtitle URLs were stored.  Now that the audio row is

@@ -16,9 +16,12 @@
  * Policy concentrated here:
  *
  *   urlFor(locale): same-language vs cross-language priority.
- *     Same-language (e.g. DE audio + DE subs): the dub's own row carries only
- *     a "signs & foreign speech" track; the JP row holds the full transcript
- *     for every locale, so prefer JP for complete coverage.
+ *     Same-language (e.g. EN audio + EN subs): if the dub's own row carries a
+ *     captions-sourced entry (the CC — full transcript of the SPOKEN dialogue,
+ *     timed to the playing cut), serve that; a subtitles-sourced entry is
+ *     usually a "signs & foreign speech" track, so then the JP row's full
+ *     transcript wins.  Provenance arrives via recordSession's ccLocales
+ *     (playbackApi.captionLocales).
  *     Cross-language: the current-audio row is timed for that dub's pacing,
  *     so prefer it; fall back to JP, then any other captured session.
  *
@@ -44,6 +47,10 @@
 
     const state = {
       matrix: {},
+      // { [audioLocale]: Set<subtitleLocale> } — which matrix entries came from
+      // the session's `captions` map (CC) rather than `subtitles`.  In-memory
+      // only, like the matrix itself.
+      ccSourced: {},
       versions: [],
       currentAudio: null,
       activeSource: null,
@@ -62,19 +69,37 @@
       }
     }
 
-    function recordSession(audioLocale, subs) {
+    function recordSession(audioLocale, subs, ccLocales) {
       if (!audioLocale || !subs) return;
       if (!state.matrix[audioLocale]) state.matrix[audioLocale] = {};
       for (const [loc, url] of Object.entries(subs)) {
         if (url) state.matrix[audioLocale][loc] = url;
       }
+      // Merge (never replace): sessions re-fetch on quality changes, and a
+      // later call without provenance must not erase what an earlier one knew.
+      if (ccLocales && ccLocales.length) {
+        const set = state.ccSourced[audioLocale] ?? (state.ccSourced[audioLocale] = new Set());
+        for (const loc of ccLocales) set.add(loc);
+      }
+    }
+
+    // Whether a row's entry came from the session's `captions` map (CC).
+    function captionSourced(audioLocale, subtitleLocale) {
+      return !!state.ccSourced[audioLocale]?.has(subtitleLocale);
     }
 
     function urlFor(subtitleLocale) {
       const cur = state.currentAudio;
       if (cur && cur !== 'ja-JP' && cur === subtitleLocale) {
+        // The dub's own CC is the full transcript of the SPOKEN dialogue,
+        // timed to the playing cut — the JP row's entry translates the
+        // Japanese script and matches neither.  Only captions-sourced entries
+        // qualify; a subtitles-sourced one is usually signs-only, so the JP
+        // row keeps priority for full coverage.
+        const own = state.matrix[cur]?.[subtitleLocale];
+        if (own && captionSourced(cur, subtitleLocale)) return own;
         if (state.matrix['ja-JP']?.[subtitleLocale]) return state.matrix['ja-JP'][subtitleLocale];
-        if (state.matrix[cur]?.[subtitleLocale])     return state.matrix[cur][subtitleLocale];
+        if (own) return own;
       } else {
         if (cur && state.matrix[cur]?.[subtitleLocale]) return state.matrix[cur][subtitleLocale];
         if (state.matrix['ja-JP']?.[subtitleLocale])    return state.matrix['ja-JP'][subtitleLocale];
@@ -143,13 +168,21 @@
     }
 
     function replaceUrl(lang, oldUrl, newUrl) {
-      for (const row of Object.values(state.matrix)) {
-        if (row[lang] === oldUrl) row[lang] = newUrl;
+      for (const [audio, row] of Object.entries(state.matrix)) {
+        if (row[lang] === oldUrl) {
+          row[lang] = newUrl;
+          // The replacement is a different asset — its captions provenance no
+          // longer holds (the next recordSession for the row restores it).
+          state.ccSourced[audio]?.delete(lang);
+        }
       }
     }
 
     function evictUrl(lang) {
-      for (const row of Object.values(state.matrix)) delete row[lang];
+      for (const [audio, row] of Object.entries(state.matrix)) {
+        delete row[lang];
+        state.ccSourced[audio]?.delete(lang);
+      }
     }
 
     function entries() { return Object.entries(state.matrix); }
@@ -181,6 +214,7 @@
 
     function reset() {
       state.matrix = {};
+      state.ccSourced = {};
       state.versions = [];
       state.currentAudio = null;
       state.activeSource = null;
@@ -189,7 +223,7 @@
     }
 
     return {
-      recordSession, urlFor, availability,
+      recordSession, urlFor, availability, captionSourced,
       setVersions, versions,
       setCurrentAudio, currentAudio,
       setActiveSource, activeSource,
@@ -229,18 +263,22 @@
 
   // Decide the stacked-subtitle layout.  audioLocale = the episode's spoken
   // language; locales = subtitle locales available on the episode (string[]);
-  // native = the viewer's language (already guaranteed to be on the episode by
-  // the picker that calls this).
+  // native = the viewer's language.  Both audio and native are checked against
+  // `locales` here — a language not on the episode can't be shown, so we never
+  // promise a band that would silently stay empty (`nativeAvailable` lets the
+  // caller explain when the viewer's language is dropped).
   //   audioMatched (a sub exists in the audio language AND it differs from the
-  //     viewer's) → primary = audio (spoken language on top), secondary = native
-  //   else (no sub matches the audio, or audio == native) → primary = native
-  //     alone, no secondary  (honest fallback — we can't match what isn't there)
+  //     viewer's) → primary = audio (spoken on top); secondary = native only if
+  //     native is also on the episode, else primary alone
+  //   else (no sub matches the audio, or audio == native) → primary = native if
+  //     available, else nothing (honest — we can't match what isn't there)
   function planLearningMode({ audioLocale, locales, native } = {}) {
     const has = (loc) => !!loc && Array.isArray(locales) && locales.includes(loc);
+    const nativeAvailable = has(native);
     if (has(audioLocale) && audioLocale !== native) {
-      return { primary: audioLocale, secondary: native || '', audioMatched: true };
+      return { primary: audioLocale, secondary: nativeAvailable ? native : '', audioMatched: true, nativeAvailable };
     }
-    return { primary: native || '', secondary: '', audioMatched: false };
+    return { primary: nativeAvailable ? native : '', secondary: '', audioMatched: false, nativeAvailable };
   }
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
