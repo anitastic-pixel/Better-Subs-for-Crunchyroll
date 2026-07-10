@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Syntax-check all JS
+        run: find extension tools -name '*.js' -o -name '*.mjs' | xargs -n1 node --check
+
+      - name: Logic tests
+        run: node tools/test-logic.mjs
+
+      - name: Signs-track tests
+        run: node tools/test-buildsigns.mjs
+
+      - name: iso-bundle up to date
+        run: |
+          node tools/build-iso-bundle.mjs
+          git diff --exit-code extension/lib/iso-bundle.js
