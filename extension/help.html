@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How it works — Better Subs for Crunchyroll</title>
+  <style>
+    /* Same design-token palette as popup.html (its own mirror — this is a
+       standalone page and can't import the MAIN-world ui-theme).
+       All interactivity is CSS-only (checkbox/radio :checked + keyframes):
+       MV3 extension pages block inline scripts, and this keeps the guide a
+       single self-contained file. */
+    :root {
+      --accent:      #ff6b35;
+      --accent-weak: rgba(255,107,53,0.12);
+      --accent-line: rgba(255,107,53,0.5);
+      --bg:        #1a1a2e;
+      --panel:     #16213e;
+      --panel-2:   #0f0f1e;
+      --border:   rgba(255,255,255,0.06);
+      --border-2: rgba(255,255,255,0.15);
+      --text:      #e0e0e0;
+      --text-2:    #cccccc;
+      --text-dim:  #8a8a9a;
+      --text-mute: #666666;
+      --ok:     #16e0a8;
+      --mt:     #b08cff;
+      --link:   #9ecbff;
+      --radius:    10px;
+      --radius-sm: 6px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background:
+        radial-gradient(1100px 500px at 70% -10%, rgba(255,107,53,0.07), transparent 60%),
+        radial-gradient(900px 500px at -10% 20%, rgba(176,140,255,0.05), transparent 55%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    main { max-width: 780px; margin: 0 auto; padding: 40px 20px 80px; }
+
+    /* ── Hero ── */
+    .hero { text-align: center; margin-bottom: 26px; }
+    .hero h1 { font-size: 30px; letter-spacing: -0.01em; }
+    .hero h1 .accent { color: var(--accent); }
+    .hero .tagline { color: var(--text-dim); font-size: 15px; margin-top: 6px; }
+
+    /* ── Sticky section nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(26,26,46,0.88); backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      margin: 0 -20px 34px; padding: 10px 20px;
+      display: flex; gap: 6px; overflow-x: auto; justify-content: safe center;
+      scrollbar-width: none;
+    }
+    nav::-webkit-scrollbar { display: none; }
+    nav a {
+      color: var(--text-dim); text-decoration: none; font-size: 12.5px;
+      padding: 4px 11px; border-radius: 20px; border: 1px solid transparent;
+      white-space: nowrap; transition: color .15s, border-color .15s, background .15s;
+    }
+    nav a:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
+    nav a b { color: var(--accent); font-weight: 600; margin-right: 4px; }
+
+    /* ── Sections ── */
+    section {
+      margin-bottom: 30px; scroll-margin-top: 64px;
+      background: rgba(22,33,62,0.35);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 26px 26px 20px;
+    }
+    h2 { font-size: 19px; margin-bottom: 8px; display: flex; align-items: baseline; gap: 11px; }
+    h2 .num {
+      font-size: 12px; color: var(--accent); font-weight: 700;
+      background: var(--accent-weak); border: 1px solid var(--accent-line);
+      border-radius: 20px; padding: 1px 10px; white-space: nowrap;
+    }
+    p  { color: var(--text-2); font-size: 14px; margin-bottom: 10px; }
+    p.dim { color: var(--text-dim); font-size: 13px; }
+    kbd {
+      background: var(--panel-2); border: 1px solid var(--border-2);
+      border-bottom-width: 2px; border-radius: 4px;
+      padding: 1px 6px; font-size: 12px; font-family: inherit;
+    }
+
+    /* ── Diagram building blocks ── */
+    .diagram {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin: 16px 0;
+      overflow-x: auto;
+    }
+    .flow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .flow.vertical { flex-direction: column; align-items: stretch; }
+    .node {
+      background: var(--panel); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      font-size: 13px; text-align: center; min-width: 90px;
+      transition: transform .15s, border-color .15s, box-shadow .15s;
+    }
+    .node:hover {
+      transform: translateY(-2px); border-color: var(--accent-line);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    }
+    .node small { display: block; color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+    .node.hot   { border-color: var(--accent-line); background: var(--accent-weak); }
+    .node.ok    { border-color: rgba(22,224,168,0.5); }
+    .node.mt    { border-color: rgba(176,140,255,0.5); }
+    .arrow  { color: var(--accent); font-size: 18px; flex-shrink: 0; }
+    .lane-label {
+      font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.06em; margin: 10px 0 6px;
+    }
+
+    /* Mock video frame with subtitle bands inside. */
+    .screen {
+      position: relative; aspect-ratio: 16 / 7;
+      background:
+        radial-gradient(340px 150px at 30% 35%, rgba(255,107,53,0.10), transparent 70%),
+        linear-gradient(160deg, #232345 0%, #12122a 100%);
+      border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+      overflow: hidden; min-width: 260px; flex: 1;
+    }
+    .screen .band {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.65); border-radius: 6px;
+      padding: 3px 12px; font-size: 12px; white-space: nowrap;
+    }
+    .screen .band.pri { bottom: 9%; color: #fff8e7; }
+    .screen .band.sec { bottom: 27%; color: var(--text-2); font-size: 11px; }
+    .screen .band.burned {
+      color: #ffd; background: none; text-shadow: 0 0 4px #000, 1px 1px 0 #000;
+      font-style: italic;
+    }
+    .screen .sign {
+      position: absolute; top: 12%; right: 10%;
+      color: var(--ok); font-size: 11px; transform: rotate(-6deg);
+      text-shadow: 1px 1px 0 #000;
+    }
+    .screen .tag {
+      position: absolute; top: 6px; left: 8px;
+      font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .side-by-side { display: flex; gap: 14px; flex-wrap: wrap; }
+
+    /* Cycling dialogue lines in the hero demo frame (stacked spans, opacity
+       keyframes offset by a third of the loop each). */
+    .cycle span { animation: cycle 9s infinite; opacity: 0; }
+    .cycle span:nth-child(2) { animation-delay: 3s; }
+    .cycle span:nth-child(3) { animation-delay: 6s; }
+    .cycle span:not(:first-child) { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+    .cycle { min-width: 200px; }
+    @keyframes cycle {
+      0% { opacity: 0; } 4% { opacity: 1; } 30% { opacity: 1; } 34% { opacity: 0; } 100% { opacity: 0; }
+    }
+
+    /* Mock player control bar. */
+    .playerbar {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--panel); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 8px 14px; font-size: 13px;
+      color: var(--text-dim);
+    }
+    .playerbar .spacer { flex: 1; }
+    .btn-mock {
+      border: 1px solid var(--accent-line); background: var(--accent-weak);
+      color: var(--accent); border-radius: 6px; padding: 3px 10px;
+      font-size: 12px; font-weight: 600; white-space: nowrap;
+      cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+    }
+    .btn-mock.idle { border-color: var(--border-2); background: var(--panel-2); color: var(--text-2); }
+    .btn-mock:hover { border-color: var(--accent); }
+
+    /* ── Getting-started previews: click JP CC / ▾ / popup in the mock bar ── */
+    label.node { cursor: pointer; }
+    #gs-btn:checked   ~ .flow label[for="gs-btn"].btn-mock { background: var(--accent); color: #16213e; }
+    #gs-menu:checked  ~ .flow label[for="gs-menu"].btn-mock { background: var(--accent-weak); color: var(--accent); border-color: var(--accent-line); }
+    #gs-btn:checked   ~ .flow label.node[for="gs-btn"],
+    #gs-menu:checked  ~ .flow label.node[for="gs-menu"],
+    #gs-popup:checked ~ .flow label.node[for="gs-popup"] {
+      border-color: var(--accent-line); background: var(--accent-weak);
+    }
+    .preview { display: none; margin-top: 14px; animation: callout-in .25s ease-out; }
+    #gs-btn:checked   ~ .preview.p-btn,
+    #gs-menu:checked  ~ .preview.p-menu,
+    #gs-popup:checked ~ .preview.p-popup { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+    .try-hint { font-size: 11.5px; color: var(--text-dim); margin-top: 8px; }
+    .try-hint b { color: var(--accent); }
+
+    /* Miniature ▾ menu / popup mock-ups. */
+    .mockpanel {
+      background: #101024; border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 6px; min-width: 210px;
+      font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .mockpanel .mp-head {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-dim); padding: 5px 9px 3px;
+    }
+    .mockpanel .mp-row {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 5px 9px; border-radius: 4px; color: var(--text-2);
+    }
+    .mockpanel .mp-row .mark { color: var(--accent); }
+    .mockpanel .mp-row.on { background: var(--accent-weak); color: var(--accent); }
+    .mockpanel .mp-row.cta { color: var(--accent); font-weight: 600; }
+    .mockpanel .mp-sep { border-top: 1px solid var(--border); margin: 4px 6px; }
+    .mockpanel .mp-note { font-size: 10.5px; color: var(--text-mute); padding: 3px 9px 5px; }
+    .preview .explain { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--text-2); }
+    .preview .explain b { color: var(--accent); }
+    .preview .screen { max-width: 300px; }
+
+    /* ── CSS-only interactive controls ──
+       A hidden checkbox/radio before the demo; label pills toggle it; the
+       demo's inner elements react via :checked ~ sibling selectors. */
+    .demo input { position: absolute; opacity: 0; pointer-events: none; }
+    .demo { position: relative; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .controls label {
+      cursor: pointer; user-select: none;
+      border: 1px solid var(--border-2); background: var(--panel);
+      color: var(--text-2); border-radius: 20px; padding: 4px 13px;
+      font-size: 12.5px; transition: border-color .15s, background .15s, color .15s;
+    }
+    .controls label:hover { border-color: var(--accent-line); }
+
+    /* State callouts — a small bubble under each demo describing what the
+       current toggle state means and where the real control lives.  Which
+       bubble shows is driven by the same :checked state as the demo. */
+    .callout {
+      display: none; margin-top: 12px; position: relative;
+      background: var(--panel); border: 1px solid var(--accent-line);
+      border-radius: var(--radius-sm); padding: 9px 13px;
+      font-size: 12.5px; color: var(--text-2);
+      animation: callout-in .25s ease-out;
+    }
+    .callout::before {
+      content: ''; position: absolute; top: -6px; left: 22px;
+      width: 10px; height: 10px; transform: rotate(45deg);
+      background: var(--panel);
+      border-left: 1px solid var(--accent-line); border-top: 1px solid var(--accent-line);
+    }
+    .callout b { color: var(--accent); }
+    .callout .where { display: block; color: var(--text-dim); font-size: 11.5px; margin-top: 3px; }
+    @keyframes callout-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+    /* ── 1:1 replicas of the popup's toggle rows ──
+       Same wording, layout and slider switch as popup.html's "Show on screen"
+       group, so what users practice here matches what they'll find. */
+    .settings { display: flex; flex-direction: column; gap: 6px; max-width: 360px; margin-bottom: 14px; }
+    .settings .group-label {
+      font-size: 10.5px; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.07em; padding-left: 2px;
+    }
+    .setting {
+      display: flex; justify-content: space-between; align-items: center; gap: 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 9px 13px; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .setting:hover { border-color: var(--border-2); }
+    .setting .row-label { font-size: 13.5px; font-weight: 600; color: var(--text); }
+    .setting .row-sub   { font-size: 11.5px; color: var(--text-dim); margin-top: 1px; }
+    .tswitch {
+      position: relative; flex-shrink: 0; width: 38px; height: 21px;
+      border-radius: 11px; background: #3a3a52; transition: background .2s;
+    }
+    .tswitch::after {
+      content: ''; position: absolute; top: 2.5px; left: 3px;
+      width: 16px; height: 16px; border-radius: 50%; background: #c9c9d4;
+      transition: left .2s, background .2s;
+    }
+    .tswitch.on { background: var(--accent); }
+    .tswitch.on::after { left: 19px; background: #fff; }
+
+    /* Section 4 — layer toggles (mirrors popup "Show on screen"). */
+    #d-dialogue:checked ~ .settings label[for="d-dialogue"] .tswitch,
+    #d-signs:checked    ~ .settings label[for="d-signs"]    .tswitch { background: var(--accent); }
+    #d-dialogue:checked ~ .settings label[for="d-dialogue"] .tswitch::after,
+    #d-signs:checked    ~ .settings label[for="d-signs"]    .tswitch::after { left: 19px; background: #fff; }
+    #d-dialogue:not(:checked) ~ .screen .band.pri { opacity: 0; }
+    #d-signs:not(:checked)    ~ .screen .sign     { opacity: 0; }
+    .screen .band, .screen .sign { transition: opacity .3s; }
+    #d-dialogue:checked        ~ #d-signs:checked        ~ .callout.c-both,
+    #d-dialogue:not(:checked)  ~ #d-signs:checked        ~ .callout.c-nodialogue,
+    #d-dialogue:checked        ~ #d-signs:not(:checked)  ~ .callout.c-nosigns,
+    #d-dialogue:not(:checked)  ~ #d-signs:not(:checked)  ~ .callout.c-none { display: block; }
+
+    /* Section 5 — the real "Crunchyroll's own subtitles" toggle (ON = shown,
+       exactly like the popup; OFF = ask for the clean stream). */
+    #s-official:checked ~ .settings label[for="s-official"] .tswitch { background: var(--accent); }
+    #s-official:checked ~ .settings label[for="s-official"] .tswitch::after { left: 19px; background: #fff; }
+    #s-official:not(:checked) ~ .screen .band.burned { opacity: 0; }
+    #s-official:not(:checked) ~ .screen .reload-note { opacity: 1; }
+    #s-official:checked       ~ .callout.c-shown  { display: block; }
+    #s-official:not(:checked) ~ .callout.c-hidden { display: block; }
+    .screen .reload-note {
+      position: absolute; top: 8px; right: 10px; opacity: 0;
+      font-size: 10px; color: var(--ok); transition: opacity .3s;
+    }
+
+    /* Section 6 — learning-mode audio picker. */
+    #a-jp:checked ~ .controls label[for="a-jp"],
+    #a-en:checked ~ .controls label[for="a-en"] {
+      border-color: var(--accent-line); background: var(--accent-weak); color: var(--accent);
+    }
+    .screen .band .alt { display: none; }
+    #a-en:checked ~ .screen .band .alt  { display: inline; }
+    #a-en:checked ~ .screen .band .base { display: none; }
+    #a-jp:checked ~ .callout.c-jp { display: block; }
+    #a-en:checked ~ .callout.c-en { display: block; }
+
+    /* Section 7 — animated re-time. Cue positions are custom-property driven;
+       checking the box transitions each drifted cue to its aligned position. */
+    .timeline { display: grid; grid-template-columns: 74px 1fr; gap: 8px 10px; align-items: center; font-size: 12px; }
+    .timeline .label { color: var(--text-dim); text-align: right; }
+    .track { position: relative; height: 20px; background: var(--panel); border-radius: 4px; }
+    .cue {
+      position: absolute; top: 3px; bottom: 3px; border-radius: 3px;
+      background: var(--border-2); left: var(--x); width: var(--w);
+      transition: left .8s cubic-bezier(.4,0,.2,1);
+    }
+    .cue.match { background: var(--accent); opacity: 0.9; }
+    #retime:checked ~ .timeline .track.src .cue { left: var(--x2); }
+    #retime:checked ~ .controls label[for="retime"] {
+      border-color: rgba(22,224,168,0.6); background: rgba(22,224,168,0.1); color: var(--ok);
+    }
+    #retime:not(:checked) ~ .callout.c-drift   { display: block; }
+    #retime:checked       ~ .callout.c-aligned { display: block; }
+    .legend { display: flex; gap: 18px; margin-top: 12px; font-size: 11px; color: var(--text-dim); flex-wrap: wrap; }
+    .legend .swatch {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+      vertical-align: -1px; margin-right: 5px;
+    }
+
+    a { color: var(--link); }
+    footer { margin-top: 40px; text-align: center; color: var(--text-mute); font-size: 12px; }
+    @media (max-width: 560px) {
+      section { padding: 18px 16px 14px; }
+      .timeline { grid-template-columns: 56px 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <h1>How <span class="accent">Better Subs</span> works</h1>
+    <p class="tagline">From the basics to the power features — each section builds on the one before it.</p>
+  </div>
+
+  <nav>
+    <a href="#big-picture"><b>1</b>Big picture</a>
+    <a href="#start"><b>2</b>Getting started</a>
+    <a href="#catalog"><b>3</b>Subtitle sources</a>
+    <a href="#layers"><b>4</b>Layers</a>
+    <a href="#hide"><b>5</b>Hiding CR's subs</a>
+    <a href="#dual"><b>6</b>Dual &amp; learning</a>
+    <a href="#sync"><b>7</b>Sync</a>
+    <a href="#custom"><b>8</b>Custom &amp; MT</a>
+  </nav>
+
+  <!-- ── 1. Big picture ── -->
+  <section id="big-picture">
+    <h2><span class="num">1</span> The big picture</h2>
+    <p>Crunchyroll decides which subtitles you get and how they look. Better Subs sits between
+       the page and the player: it reads the same episode data the player receives, fetches the
+       subtitle files itself, and draws them in its own layer on top of the video.</p>
+    <div class="diagram">
+      <div class="flow">
+        <div class="node">Crunchyroll<small>episode data + subtitle files</small></div>
+        <div class="arrow">→</div>
+        <div class="node hot">Better Subs<small>reads, fetches, restyles</small></div>
+        <div class="arrow">→</div>
+        <div class="screen">
+          <span class="tag">your screen</span>
+          <span class="sign">← typeset sign</span>
+          <span class="band pri cycle">
+            <span>Our subtitle overlay — styled your way</span>
+            <span>Every language in the catalog</span>
+            <span>Perfectly timed to your video</span>
+          </span>
+        </div>
+      </div>
+    </div>
+    <p class="dim">Nothing is modified on Crunchyroll's servers and no video is touched —
+       the extension only changes what your own browser displays.</p>
+  </section>
+
+  <!-- ── 2. Getting started ── -->
+  <section id="start">
+    <h2><span class="num">2</span> Getting started</h2>
+    <p>On any episode you'll find one new button in the player controls. Click it to switch the
+       episode's subtitles to the extension; the <b>▾</b> next to it opens the menu with every
+       language and feature.</p>
+    <div class="diagram demo">
+      <input type="radio" name="gs" id="gs-btn" checked />
+      <input type="radio" name="gs" id="gs-menu" />
+      <input type="radio" name="gs" id="gs-popup" />
+      <div class="flow vertical">
+        <div class="playerbar">
+          ▶ &nbsp; ⏸ &nbsp; 🔊 <span class="spacer"></span>
+          <label for="gs-btn" class="btn-mock">JP CC</label>
+          <label for="gs-menu" class="btn-mock idle">▾</label>
+          <span>⚙ &nbsp; ⛶</span>
+        </div>
+        <div class="flow" style="margin-top:12px;">
+          <label for="gs-btn" class="node hot">JP CC button<small>one click: subtitles on / off</small></label>
+          <label for="gs-menu" class="node">▾ menu<small>languages · dual subs · tools</small></label>
+          <label for="gs-popup" class="node">Extension popup<small>styling &amp; settings (toolbar icon)</small></label>
+        </div>
+        <div class="try-hint">☝ These are clickable — <b>try them</b> to preview what each opens.</div>
+      </div>
+
+      <div class="preview p-btn">
+        <div class="screen">
+          <span class="tag">after one click</span>
+          <span class="band pri">Our subtitles take over ✓</span>
+        </div>
+        <div class="explain"><b>The button lights up</b> and the episode's subtitles switch to the
+          extension — Crunchyroll's own are hidden, ours render in their place. Click it again to
+          hand subtitles back to Crunchyroll. If the episode data is still loading, the click is
+          queued and fires by itself once it's ready.</div>
+      </div>
+
+      <div class="preview p-menu">
+        <div class="mockpanel">
+          <div class="mp-head">Subtitle source</div>
+          <div class="mp-row cta"><span>📚 Match my audio — English</span></div>
+          <div class="mp-row on"><span>English (CC)</span><span class="mark">✓</span></div>
+          <div class="mp-row"><span>English <small>(Japanese source)</small></span></div>
+          <div class="mp-row"><span>Español (América Latina)</span></div>
+          <div class="mp-row"><span>日本語 — Japanese (DeepL)</span></div>
+          <div class="mp-sep"></div>
+          <div class="mp-row"><span>Second subtitle</span><span>None ›</span></div>
+          <div class="mp-row"><span>Show on screen</span><span>💬 🪧 ›</span></div>
+          <div class="mp-row"><span>Manage sources…</span><span>›</span></div>
+          <div class="mp-note">load a file · translate · adjust sync &amp; timing</div>
+        </div>
+        <div class="explain"><b>The ▾ menu</b> lists every language found for this episode — the
+          active one is ticked, the dub's own captions are marked <b>(CC)</b>, and tracks you made
+          (uploads, translations) appear alongside. Below the list: the second-subtitle picker,
+          per-layer visibility, and the manage tools from sections 4–8.</div>
+      </div>
+
+      <div class="preview p-popup">
+        <div class="mockpanel">
+          <div class="mp-head">Better Subs for Crunchyroll</div>
+          <div class="mp-row"><span>Enable extension</span><span class="mark">●</span></div>
+          <div class="mp-row"><span>Auto-enable subtitles</span><span>○</span></div>
+          <div class="mp-row"><span>Crunchyroll's own subtitles</span><span>○</span></div>
+          <div class="mp-sep"></div>
+          <div class="mp-row"><span>Timing &amp; study</span><span>›</span></div>
+          <div class="mp-row"><span>Subtitle appearance</span><span>›</span></div>
+          <div class="mp-row"><span>Translation</span><span>›</span></div>
+          <div class="mp-row"><span>Help &amp; feedback</span><span>›</span></div>
+        </div>
+        <div class="explain"><b>The popup</b> (toolbar icon) holds everything that isn't
+          per-episode: master on/off, auto-activate, whether Crunchyroll's own subtitles show,
+          and the full styling controls — font, size, colours, background box, outline. Style
+          changes apply live while you watch.</div>
+      </div>
+    </div>
+    <p class="dim">Tip: turn on <i>Auto-enable subtitles</i> in the popup and they switch over by
+       themselves on every episode. <kbd>Alt+J</kbd> toggles them from anywhere;
+       plain <kbd>C</kbd> works while you're on the player.</p>
+  </section>
+
+  <!-- ── 3. Where subtitles come from ── -->
+  <section id="catalog">
+    <h2><span class="num">3</span> Where the subtitles come from</h2>
+    <p>Every episode ships a catalog of subtitle files in many languages — including some the
+       player never offers you. When an episode loads, the extension builds that catalog and the
+       ▾ menu lists everything it found. Picking a language fetches the real subtitle file and
+       renders it directly.</p>
+    <div class="diagram">
+      <div class="flow">
+        <div class="node">Episode loads</div>
+        <div class="arrow">→</div>
+        <div class="node">Catalog built<small>all languages, all versions</small></div>
+        <div class="arrow">→</div>
+        <div class="node hot">You pick one<small>▾ menu</small></div>
+        <div class="arrow">→</div>
+        <div class="node">File fetched<small>.ass / .vtt</small></div>
+        <div class="arrow">→</div>
+        <div class="node ok">Rendered<small>overlay on the video</small></div>
+      </div>
+    </div>
+    <p class="dim">The Japanese-audio version of an episode usually carries the most complete
+       subtitle set, so the extension quietly checks it too and offers the best file for each
+       language. On dubs, the dub's own closed captions show up marked <b>(CC)</b>.</p>
+  </section>
+
+  <!-- ── 4. Dialogue vs. signs (interactive layer toggles) ── -->
+  <section id="layers">
+    <h2><span class="num">4</span> Two layers: dialogue and signs</h2>
+    <p>A subtitle file contains two kinds of lines: <b>dialogue</b> (what's spoken, drawn as the
+       bottom band) and <b>typeset signs</b> (translated on-screen text — shop names, phone
+       screens, notes — positioned where the original text is). They're separate layers —
+       try the toggles, exactly like ▾ → <i>Show on screen</i>:</p>
+    <div class="diagram demo">
+      <input type="checkbox" id="d-dialogue" checked />
+      <input type="checkbox" id="d-signs" checked />
+      <div class="settings">
+        <div class="group-label">Show on screen</div>
+        <label class="setting" for="d-dialogue">
+          <span><span class="row-label">Dialogue</span></span>
+          <span class="tswitch"></span>
+        </label>
+        <label class="setting" for="d-signs">
+          <span><span class="row-label">Typeset signs</span>
+            <span class="row-sub" style="display:block;">On-screen text — signs, titles, captions</span></span>
+          <span class="tswitch"></span>
+        </label>
+      </div>
+      <div class="screen" style="max-width:460px;">
+        <span class="sign">駅 → Station</span>
+        <span class="band pri">I'm heading home.</span>
+      </div>
+      <div class="callout c-both"><b>Both layers on</b> — spoken lines at the bottom, translated signs where the original text sits.
+        <span class="where">These are the same rows you'll find in the popup and in ▾ → Show on screen.</span></div>
+      <div class="callout c-nodialogue"><b>Dialogue off</b> — the bottom band is gone, but signs keep rendering. Nice for testing your listening while still catching on-screen text.</div>
+      <div class="callout c-nosigns"><b>Typeset signs off</b> — only spoken lines show; on-screen text stays untranslated.</div>
+      <div class="callout c-none"><b>Everything off</b> — the overlay stays active but draws nothing. Flip either switch to bring a layer back (the JP CC button still shows as active).</div>
+    </div>
+    <p class="dim">Signs keep their original fonts, rotation and placement — they're drawn by a
+       real subtitle engine (libass), the same one fansub players use.</p>
+  </section>
+
+  <!-- ── 5. Hiding CR's subs (interactive stream switch) ── -->
+  <section id="hide">
+    <h2><span class="num">5</span> Hiding Crunchyroll's own subtitles</h2>
+    <p>So you don't see two sets of subtitles at once, the extension hides Crunchyroll's. Soft
+       subtitles (text drawn over the video) are hidden instantly. But Crunchyroll's newer player
+       often <b>burns subtitles into the video itself</b> ("hardsubs") — those can't be hidden,
+       only avoided, by asking the player for the clean, text-free stream. This is the exact
+       toggle from the popup — try it:</p>
+    <div class="diagram demo">
+      <input type="checkbox" id="s-official" checked />
+      <div class="settings">
+        <div class="group-label">Show on screen</div>
+        <label class="setting" for="s-official">
+          <span><span class="row-label">Crunchyroll's own subtitles</span>
+            <span class="row-sub" style="display:block;">Show CR's built-in subtitles alongside ours</span></span>
+          <span class="tswitch"></span>
+        </label>
+      </div>
+      <div class="screen" style="max-width:460px;">
+        <span class="tag">what you see</span>
+        <span class="reload-note">✓ clean stream (after reload)</span>
+        <span class="band burned" style="bottom:24%;">Burned-in text — part of the picture</span>
+        <span class="band pri">Our overlay</span>
+      </div>
+      <div class="callout c-shown"><b>Toggle ON (the default)</b> — Crunchyroll's subtitles stay. On a hardsub stream that means two subtitle sets at once: the italic line is baked into the video pixels and our overlay draws on top of it. If you've ever thought "I can still see Crunchyroll's subtitles underneath" — this toggle is why.</div>
+      <div class="callout c-hidden"><b>Toggle OFF</b> — the extension asks for the clean, text-free video stream. Takes effect on the next video load, so expect a reload prompt if a burned stream is already playing.
+        <span class="where">This same switch lives in the popup and in ▾ → Show on screen.</span></div>
+    </div>
+    <p>Because the burned-in text is part of the video, switching to the clean stream takes
+       effect when the video next loads — that's why a <b>reload prompt</b> appears if a burned
+       stream is already playing when you hide Crunchyroll's subtitles.</p>
+  </section>
+
+  <!-- ── 6. Dual subtitles & learning mode (interactive audio picker) ── -->
+  <section id="dual">
+    <h2><span class="num">6</span> Dual subtitles &amp; Learning mode</h2>
+    <p>Show two languages at once: a primary band, and a secondary band above it
+       (▾ → <i>Second subtitle</i>). Learning mode is the guided version — one tap sets the
+       primary to match the <b>audio you're hearing</b> and puts your own language underneath.
+       There's no audio switch to press in the extension — pick which version you'd be
+       watching, and see how the bands follow:</p>
+    <div class="diagram demo">
+      <input type="radio" name="audio" id="a-jp" checked />
+      <input type="radio" name="audio" id="a-en" />
+      <div class="controls">
+        <label for="a-jp">If you're watching: 🔊 Japanese</label>
+        <label for="a-en">If you're watching: 🔊 English dub</label>
+      </div>
+      <div class="screen" style="max-width:460px;">
+        <span class="tag">learning mode</span>
+        <span class="band sec"><span class="base">I'm heading home.</span><span class="alt">もう家に帰るね。</span></span>
+        <span class="band pri"><span class="base">もう家に帰るね。</span><span class="alt">I'm heading home. (CC)</span></span>
+      </div>
+      <div class="callout c-jp"><b>Japanese audio</b> — the primary band shows Japanese (read what you hear), your language sits above for support.
+        <span class="where">Real thing: ▾ → 📚 Match my audio.</span></div>
+      <div class="callout c-en"><b>English dub</b> — the primary flips to the dub's own closed captions, marked <b>(CC)</b>, which match the spoken script word-for-word; the support band becomes Japanese.
+        <span class="where">Same button — learning mode always follows the audio track you're on.</span></div>
+    </div>
+    <p class="dim">Study helpers pair with this: <kbd>Alt+R</kbd> replays the current line,
+       <kbd>Alt+C</kbd> copies it (for a dictionary or flashcards), and <i>auto-pause</i> stops
+       playback at the end of each line so you can read at your own pace.</p>
+  </section>
+
+  <!-- ── 7. Timing & sync (animated re-time demo) ── -->
+  <section id="sync">
+    <h2><span class="num">7</span> How subtitles stay in sync</h2>
+    <p>A subtitle file is timed for one specific cut of an episode — a dub can run on a slightly
+       different cut, so a borrowed file would drift. The extension <b>re-times</b> it: lines with
+       matching text in both versions become anchors, and everything between them is shifted to
+       fit. This happens automatically — there's no button for it in the extension — but you can
+       watch what it does:</p>
+    <div class="diagram demo">
+      <input type="checkbox" id="retime" />
+      <div class="controls">
+        <label for="retime">▶ Watch it re-time</label>
+      </div>
+      <div class="timeline">
+        <span class="label">subtitle file</span>
+        <div class="track src">
+          <span class="cue match" style="--x:4%;  --x2:9%;  --w:7%;"></span>
+          <span class="cue"       style="--x:16%; --x2:21%; --w:9%;"></span>
+          <span class="cue match" style="--x:34%; --x2:39%; --w:6%;"></span>
+          <span class="cue"       style="--x:48%; --x2:53%; --w:8%;"></span>
+          <span class="cue match" style="--x:70%; --x2:75%; --w:7%;"></span>
+        </div>
+        <span class="label">your video</span>
+        <div class="track">
+          <span class="cue match" style="--x:9%;  --w:7%;"></span>
+          <span class="cue"       style="--x:21%; --w:9%;"></span>
+          <span class="cue match" style="--x:39%; --w:6%;"></span>
+          <span class="cue"       style="--x:53%; --w:8%;"></span>
+          <span class="cue match" style="--x:75%; --w:7%;"></span>
+        </div>
+      </div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--accent);"></span>anchor — same line found in both</span>
+        <span><span class="swatch" style="background:var(--border-2);"></span>re-timed to fit between anchors</span>
+      </div>
+      <div class="callout c-drift"><b>Before</b> — the file was timed for a different cut, so every line lands early. This is what an unsynced borrowed subtitle looks like.</div>
+      <div class="callout c-aligned"><b>After</b> — the orange anchor lines matched, and everything slid into place. In the player this happens automatically; a badge near the button tells you it synced (or that it used the approximate fallback).</div>
+    </div>
+    <p>When the two versions are too different to anchor precisely, a coarse fallback estimates a
+       single overall shift and tells you it's approximate. And you can always nudge by hand:
+       ▾ → <i>Adjust timing</i> moves subtitle&nbsp;1, subtitle&nbsp;2, or both, in 0.1s steps,
+       remembered per episode.</p>
+  </section>
+
+  <!-- ── 8. Custom sources & machine translation ── -->
+  <section id="custom">
+    <h2><span class="num">8</span> Your own subtitles &amp; machine translation</h2>
+    <p>Beyond Crunchyroll's catalog, two more ways to get a subtitle track:</p>
+    <div class="diagram">
+      <div class="lane-label">Load a file — fansubs welcome</div>
+      <div class="flow">
+        <div class="node">.ass / .ssa / .srt / .vtt<small>▾ → Load subtitle file</small></div>
+        <div class="arrow">→</div>
+        <div class="node">Auto-sync<small>anchored to the episode</small></div>
+        <div class="arrow">→</div>
+        <div class="node ok">Own track<small>fonts &amp; signs included</small></div>
+      </div>
+      <div class="lane-label" style="margin-top:18px;">Machine translation — languages CR doesn't have</div>
+      <div class="flow">
+        <div class="node">Pick a source<small>any catalog language</small></div>
+        <div class="arrow">→</div>
+        <div class="node mt">Translated<small>DeepL — your own API key</small></div>
+        <div class="arrow">→</div>
+        <div class="node ok">New track<small>e.g. Japanese subs on a dub</small></div>
+      </div>
+    </div>
+    <p class="dim">Both become regular tracks in the ▾ menu — restyle them, use them as either
+       band of a dual-subtitle pair, or export them as .srt. Translations are cached per episode
+       so they aren't re-billed on rewatch.</p>
+  </section>
+
+  <footer>
+    Better Subs for Crunchyroll · questions or bugs → the popup's <b>Help &amp; feedback</b> section
+  </footer>
+</main>
+</body>
+</html>
