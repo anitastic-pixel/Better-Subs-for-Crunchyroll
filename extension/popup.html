@@ -513,6 +513,38 @@
       color: #f0c25a;
     }
 
+    /* ── "How it works" guide call-to-action ──
+       Same always-visible treatment as the coffee CTA, in our accent, so the
+       visual guide is discoverable without opening Help & feedback.  Left-
+       aligned two-line layout: title + one-line pitch, chevron on the right. */
+    .guide-cta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      padding: 10px 12px;
+      text-decoration: none;
+      color: var(--text);
+      background: var(--accent-weak);
+      border: 1px solid var(--accent-line);
+      border-radius: var(--radius-sm);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .guide-cta:hover { background: rgba(255,107,53,0.2); border-color: var(--accent); }
+    .guide-cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .guide-cta .g-icon { font-size: 17px; }
+    .guide-cta .g-title { font-size: 12.5px; font-weight: 600; color: var(--accent); }
+    .guide-cta .g-sub { font-size: 10.5px; color: var(--text-dim); margin-top: 1px; }
+    .guide-cta .g-chev { margin-left: auto; color: var(--accent); font-size: 15px; }
+
+    /* Report-writing tips — two concrete pointers above the note box. */
+    .report-tips { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 4px; }
+    .report-tips .tip {
+      display: flex; gap: 7px; align-items: flex-start;
+      font-size: 10.5px; color: var(--text-dim); line-height: 1.45;
+    }
+    .report-tips .tip b { color: var(--text-2); font-weight: 600; }
+
     kbd {
       background: #222;
       border: 1px solid #444;
@@ -1122,16 +1154,28 @@
     </div>
   </details>
 
+  <!-- Guide — always visible, like the coffee CTA, so new users find it
+       without digging through a collapsed section. -->
+  <a class="guide-cta" href="help.html" target="_blank">
+    <span class="g-icon">📖</span>
+    <span>
+      <span class="g-title">How it works — visual guide</span>
+      <span class="g-sub" style="display:block;">An interactive tour of every feature</span>
+    </span>
+    <span class="g-chev" aria-hidden="true">›</span>
+  </a>
+
   <details id="sec-help" class="tiled">
     <summary>Help &amp; feedback</summary>
     <div class="row col sm bare">
-      <div class="row-sub center" style="margin-bottom:6px;">
-        <a href="help.html" target="_blank" class="link">📖 How it works — a visual guide</a>
-      </div>
       <div class="muted">
         Something not working? Send a report so we can see what happened. With
         diagnostics on it attaches a short log (version, page, recent activity —
         private tokens stripped); turn it off to send just your note.
+      </div>
+      <div class="report-tips">
+        <span class="tip">💡<span><b>Send it from the episode tab</b> where the problem happened — the report then pins down the exact page and what the extension just did.</span></span>
+        <span class="tip">💡<span><b>Say what you expected vs. what you saw</b> — e.g. "picked English (CC) but the old subs kept showing" beats "subs broken".</span></span>
       </div>
       <textarea id="reportNote" class="report-note" rows="2" placeholder="What went wrong? (optional)"></textarea>
       <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;margin-bottom:6px;">
