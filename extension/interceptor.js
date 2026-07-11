@@ -468,7 +468,19 @@
     onSetLayer: (name, on) => {
       if (name === 'dialogue')      saveSetting('showDialogue', !!on);
       else if (name === 'signs')    saveSetting('showSigns', !!on);
-      else if (name === 'official') saveSetting('hideOfficialSubs', !on);
+      else if (name === 'official') {
+        saveSetting('hideOfficialSubs', !on);
+        // Burned-in (hardsub) streams can only change on a fresh playback
+        // load — hiding takes a reload; the DOM suppression layers handle
+        // everything else live.
+        if (!on && _hardsubStream) {
+          showErrorToast(
+            'This video has Crunchyroll subtitles burned in — reload to remove them.',
+            () => setTimeout(() => location.reload(), 400),
+            'Reload'
+          );
+        }
+      }
     },
     onLoadFile:      ()       => promptLoadFile(),
     onRemoveCustom:  (id)     => removeCustomSource(id),
@@ -1195,26 +1207,33 @@
   // Resolve a CR locale to render-ready cues, lazily fetching its session/URL the
   // same way the activation path does.
   async function fetchCuesForLocale(ep, locale) {
-    let url;
-    if (locale === 'ja-JP') {
-      url = ep.jpCaptionUrl || ep.jpSubtitleUrl;
-      if (!url) {
-        const g = ep.jpGuid ?? ep.getMappedJpGuid?.();
-        if (g && ep.authHeaders) {
-          const d = await fetchAndCacheJpData(g, ep.authHeaders);
-          url = d?.captionUrl || d?.subtitleUrl || null;
+    // Resolve the signed subtitle URL.  forceFresh evicts the cached URL first —
+    // same evict + refetch the activation path (loadSubtitleCues) uses — so a
+    // stale (expired-signature) URL can be replaced with a freshly-signed one.
+    const resolveUrl = async (forceFresh) => {
+      if (locale === 'ja-JP') {
+        if (forceFresh) { if (ep.jpGuid) ep.evictCachedJpData(ep.jpGuid); ep.clearJpUrls(); }
+        let url = forceFresh ? null : (ep.jpCaptionUrl || ep.jpSubtitleUrl);
+        if (!url) {
+          const g = ep.jpGuid ?? ep.getMappedJpGuid?.();
+          if (g && ep.authHeaders) {
+            const d = await fetchAndCacheJpData(g, ep.authHeaders);
+            url = d?.captionUrl || d?.subtitleUrl || null;
+          }
         }
+        return url;
       }
-    } else {
-      url = getSubtitleUrl(locale);
-      if (!url) {
-        const v = ep.catalog.versions().find(v => v.locale === locale);
-        if (v?.guid) {
-          const r = await fetchSubUrlForSource(v.guid, locale, ep.authHeaders);
-          url = r.url ?? getSubtitleUrl(locale);
-        }
+      const v = ep.catalog.versions().find(v => v.locale === locale);
+      if (forceFresh) { ep.catalog.evictUrl(locale); if (v?.guid) ep.evictCachedSrcUrl(v.guid, locale); }
+      let url = forceFresh ? null : getSubtitleUrl(locale);
+      if (!url && v?.guid) {
+        const r = await fetchSubUrlForSource(v.guid, locale, ep.authHeaders);
+        url = r.url ?? getSubtitleUrl(locale);
       }
-    }
+      return url;
+    };
+
+    let url = await resolveUrl(false);
     if (!url) return null;
     // Fetch the raw .ass directly and keep its text in-memory.  We can't read it
     // back from getCachedRawText: the sessionStorage raw-text cache is best-effort
@@ -1223,12 +1242,19 @@
     // though the cues parsed fine.  Used by the secondary sign layer + MT signs.
     let text = ep.getCachedRawText(url);
     if (!text) {
-      try {
-        const resp = await originalFetch(url);
-        if (!resp.ok) return null;
-        text = await resp.text();
-        ep.setCachedRawText(url, text);  // best-effort; we keep `text` regardless
-      } catch (_) { return null; }
+      let resp = await originalFetch(url).catch(() => null);
+      if (!resp || !resp.ok) {
+        // Cached URL's signature likely expired (CDN 403/410).  Evict, refetch a
+        // fresh URL, and retry once — otherwise the stale URL stays cached and the
+        // dual-sub/MT-source track never recovers until its TTL lapses.
+        const fresh = await resolveUrl(true);
+        if (!fresh || fresh === url) return null;
+        url  = fresh;
+        resp = await originalFetch(url).catch(() => null);
+        if (!resp || !resp.ok) return null;
+      }
+      text = await resp.text();
+      ep.setCachedRawText(url, text);  // best-effort; we keep `text` regardless
     }
     const cues = parseSubtitles(text, url);
     return cues.length ? { cues, rawText: text, url } : null;
@@ -2785,7 +2811,58 @@
   function setSignSource(raw) { _signRawAss = raw || null; pushSignLayer(); }
   // Wrap overlayActive writes so the libass sign layer follows on/off (it shows
   // signs only while the overlay is active, and clears the moment it turns off).
-  function setOverlayActive(v) { overlayActive = v; pushSignLayer(); }
+  function setOverlayActive(v) { overlayActive = v; pushSignLayer(); if (v) maybeWarnHardsub(); }
+
+  // ── Hardsub-stream detection ───────────────────────────────────────────────
+  // The newer CR player ships subtitles BURNED INTO the video (a per-language
+  // "hardsub" stream variant picked by the viewer's CR subtitle preference).
+  // Burned pixels are the one thing subSuppression's DOM/CSS/TextTrack layers
+  // can't touch, so a user with a CR subtitle language set sees CR's subs UNDER
+  // ours.  The only remedy is the playback-JSON hardSubs strip (hide-official),
+  // which applies on the next playback load — hence a reload.  Detection:
+  // playback JSON gives the variant manifest URLs; a buffered PerformanceObserver
+  // watches for the player fetching one (exact path match, query stripped).
+  let _hardsubStream     = false;
+  let _hardsubObs        = null;
+  let _hardsubWarnedGuid = null;
+  function watchForHardsubStream(hardSubsMap) {
+    _hardsubStream = false;
+    const paths = Object.values(hardSubsMap ?? {})
+      .map((v) => (typeof v === 'string' ? v : v?.url))
+      .filter(Boolean)
+      .map((u) => u.split('?')[0]);
+    if (!paths.length) return;
+    const set = new Set(paths);
+    const test = (name) => {
+      if (_hardsubStream) return;
+      if (set.has(name.split('?')[0]) || /hardsub/i.test(name)) {
+        _hardsubStream = true;
+        // The manifest fetch can land AFTER auto-activation — warn now, not
+        // only at the next setOverlayActive(true).
+        if (overlayActive) maybeWarnHardsub();
+      }
+    };
+    try {
+      performance.getEntriesByType('resource').forEach((e) => test(e.name));
+      _hardsubObs?.disconnect();
+      _hardsubObs = new PerformanceObserver((list) => list.getEntries().forEach((e) => test(e.name)));
+      _hardsubObs.observe({ type: 'resource', buffered: true });
+    } catch (_) {}
+  }
+  // Once per episode, when our overlay is up over a burned-in-subtitle stream:
+  // offer the fix (turn on hide-official + reload) instead of silently drawing
+  // a second subtitle band over Crunchyroll's.
+  function maybeWarnHardsub() {
+    const ep = currentEp();
+    if (!ep || isHideOfficialSubs() || !_hardsubStream) return;
+    if (_hardsubWarnedGuid === ep.guid) return;
+    _hardsubWarnedGuid = ep.guid;
+    showErrorToast(
+      "Crunchyroll's subtitles are burned into this video stream.",
+      () => { saveSetting('hideOfficialSubs', true); setTimeout(() => location.reload(), 400); },
+      'Hide & reload'
+    );
+  }
 
   // Tracks whether a spoken (dialogue) line was on screen last tick, so study
   // auto-pause can fire exactly once on the showing→gap transition.
@@ -4380,6 +4457,9 @@
       // carry depend on the row being present.
       const sessionSubs = PLAYBACK.subtitleMap(data);
       storeSessionSubs(currentAudio, sessionSubs, PLAYBACK.captionLocales(data));
+      // Watch whether the player picks a burned-in (hardsub) stream variant —
+      // if it does and our overlay comes up, maybeWarnHardsub offers the fix.
+      watchForHardsubStream(data.hardSubs ?? data.hardsubs ?? data.hard_subs);
       log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       const jpVersion = PLAYBACK.jpVersion(data);
