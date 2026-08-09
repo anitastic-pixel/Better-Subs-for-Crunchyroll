@@ -719,6 +719,38 @@
       menuEl.appendChild(off);
     }
 
+    // Rebuilt content can be wider/taller than the view it was positioned for —
+    // re-clamp (no-op before the menu is mounted, i.e. the open() build).
+    const _origBuildContent = buildContent;
+    buildContent = function (menuEl) {
+      _origBuildContent(menuEl);
+      if (menuEl.isConnected) positionMenu(menuEl);
+    };
+
+    // Anchor the menu to the ▾ button, clamped inside the player (or viewport)
+    // box.  Called at open AND after every submenu rebuild: the views differ in
+    // width (toggle rows are wider than the source list), so a left position
+    // clamped for the sources view can push a wider submenu off the right edge.
+    function positionMenu(menu) {
+      const menuBtn = document.getElementById(MENU_BTN_ID);
+      if (!menuBtn) return;
+      const r     = menuBtn.getBoundingClientRect();
+      const mh    = menu.offsetHeight;
+      const above = r.top > mh + 8 || r.top > window.innerHeight - r.bottom;
+      if (menu.parentElement && menu.parentElement !== document.body) {
+        // position:absolute, relative to the player container's box.
+        menu.style.position = 'absolute';
+        const mt = menu.parentElement.getBoundingClientRect();
+        if (above) { menu.style.bottom = `${mt.bottom - r.top + 4}px`; menu.style.top = ''; }
+        else       { menu.style.top    = `${r.bottom - mt.top + 4}px`; menu.style.bottom = ''; }
+        menu.style.left = `${Math.max(0, Math.min(r.left - mt.left, mt.width - menu.offsetWidth - 8))}px`;
+      } else {
+        if (above) { menu.style.bottom = `${window.innerHeight - r.top + 4}px`; menu.style.top = ''; }
+        else       { menu.style.top    = `${r.bottom + 4}px`; menu.style.bottom = ''; }
+        menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
+      }
+    }
+
     function open() {
       if (document.getElementById(MENU_ID)) { close(); return; }
       const menuBtn = document.getElementById(MENU_BTN_ID);
@@ -752,21 +784,7 @@
       }
       mountTarget.appendChild(menu);
 
-      const r     = menuBtn.getBoundingClientRect();
-      const mh    = menu.offsetHeight;
-      const above = r.top > mh + 8 || r.top > window.innerHeight - r.bottom;
-      if (inPlayer) {
-        // position:absolute, relative to the player container's box.
-        menu.style.position = 'absolute';
-        const mt = mountTarget.getBoundingClientRect();
-        if (above) { menu.style.bottom = `${mt.bottom - r.top + 4}px`; menu.style.top = ''; }
-        else       { menu.style.top    = `${r.bottom - mt.top + 4}px`; menu.style.bottom = ''; }
-        menu.style.left = `${Math.max(0, Math.min(r.left - mt.left, mt.width - menu.offsetWidth - 8))}px`;
-      } else {
-        if (above) { menu.style.bottom = `${window.innerHeight - r.top + 4}px`; menu.style.top = ''; }
-        else       { menu.style.top    = `${r.bottom + 4}px`; menu.style.bottom = ''; }
-        menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
-      }
+      positionMenu(menu);
 
       outsideHandler = (e) => {
         if (!menu.contains(e.target) && e.target !== menuBtn) close();

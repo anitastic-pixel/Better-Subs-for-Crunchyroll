@@ -3220,14 +3220,35 @@
     }, delay));
   }
 
+  // Seeking into the MIDDLE of a line must show it immediately — timeupdate
+  // alone can leave the band empty until the next cue boundary after a seek
+  // (notably while paused, where timeupdate stops firing).  cuesAt() is
+  // stateless, so one explicit repaint on 'seeked' is the whole fix.
+  const onVideoSeeked = () => onTimeUpdate();
+  // Paused → dialogue bands become text-selectable (flashcards, dictionary
+  // lookups); playing → pointer-transparent again so subtitle clicks reach
+  // Crunchyroll's pause layer.  See cue-renderer setSelectable.
+  const onVideoPause = () => renderer.setSelectable(true);
+  const onVideoPlay  = () => renderer.setSelectable(false);
+
   function startSync() {
     if (!videoEl) return;
     videoEl.addEventListener('timeupdate', onTimeUpdate);
+    videoEl.addEventListener('seeked', onVideoSeeked);
+    videoEl.addEventListener('pause',  onVideoPause);
+    videoEl.addEventListener('play',   onVideoPlay);
+    renderer.setSelectable(videoEl.paused);  // activated while already paused
     document.addEventListener('fullscreenchange', onFullscreenChange);
   }
 
   function stopSync() {
-    if (videoEl) videoEl.removeEventListener('timeupdate', onTimeUpdate);
+    if (videoEl) {
+      videoEl.removeEventListener('timeupdate', onTimeUpdate);
+      videoEl.removeEventListener('seeked', onVideoSeeked);
+      videoEl.removeEventListener('pause',  onVideoPause);
+      videoEl.removeEventListener('play',   onVideoPlay);
+    }
+    renderer.setSelectable(false);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     renderer.hide();
     // Clearing remaster state on stopSync forces a fresh anchor map calculation

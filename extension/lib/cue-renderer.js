@@ -65,6 +65,13 @@
   function createCueRenderer({ getSubScale, getSubBottomFloor }) {
     let videoEl  = null;
     let overlayEl = null;
+    // While the video is PAUSED the dialogue bands become text-selectable
+    // (flashcards, dictionary lookups): the caller flips this via
+    // setSelectable(paused).  Playing keeps bands pointer-transparent so a
+    // click on the subtitle still reaches Crunchyroll's pause layer, and the
+    // overlay stays under CR's chrome (selection mid-playback is futile
+    // anyway — the next render replaces the DOM and drops it).
+    let selectable = false;
     let lastCueKey = '';
     // Memo for the style-context portion of the cache key: the caller hands back
     // the SAME styleCtx object reference until settings change, so we stringify
@@ -325,8 +332,9 @@
         flexDirection: 'column',
         alignItems:    col === 0 ? 'flex-start' : col === 2 ? 'flex-end' : 'center',
         gap:           '4px',
-        pointerEvents: 'none',
       });
+      container.dataset.crBand = '1';
+      applyBandSelectability(container);
 
       for (const cue of cues) {
         const fz    = calcFontSize(cue, box.w, box.h);
@@ -364,8 +372,9 @@
         alignItems:    'center',
         gap:           '4px',
         textAlign:     'center',
-        pointerEvents: 'none',
       });
+      band.dataset.crBand = '1';
+      applyBandSelectability(band);
       for (const cue of cues) {
         const fz    = calcFontSize(cue, box.w, box.h);
         const lines = cue.text.split('\n').slice(0, MAX_LINES);
@@ -412,8 +421,9 @@
         // thumbnail — so they render over the subtitles like CR's own subs do.
         // z-index 0 (not 2): the chrome layers are positive-z-index, and at 2 the
         // subs popped through the hover preview.  Was 2147483640 originally to
-        // clip-defeat chrome; that intent is no longer wanted.
-        zIndex:        '0',
+        // clip-defeat chrome; that intent is no longer wanted.  (While paused,
+        // setSelectable raises this to 2 so the bands can take text selection.)
+        zIndex:        selectable ? '2' : '0',
         display:       'none',
         overflow:      'hidden',
       });
@@ -567,11 +577,35 @@
       }
     }
 
+    // One band's selection styling, from the current `selectable` flag.
+    function applyBandSelectability(el) {
+      Object.assign(el.style, {
+        pointerEvents: selectable ? 'auto' : 'none',
+        userSelect:    selectable ? 'text' : 'none',
+        cursor:        selectable ? 'text' : '',
+      });
+    }
+
+    // Paused → selectable: raise the overlay above CR's chrome (z 2 — the same
+    // level that made subs pop through the scrub-preview thumbnail, which is
+    // the accepted cosmetic cost WHILE PAUSED) and open the bands to pointer
+    // events.  Playing → restore z 0 / pointer-transparent.  Applies to the
+    // bands already on screen too — while paused there's no timeupdate to
+    // rebuild them.
+    function setSelectable(on) {
+      selectable = !!on;
+      if (overlayEl) {
+        overlayEl.style.zIndex = selectable ? '2' : '0';
+        overlayEl.querySelectorAll('[data-cr-band]').forEach(applyBandSelectability);
+      }
+    }
+
     return {
       mount, unmount,
       show, hide,
       render, invalidate,
       reposition, reparentForFullscreen,
+      setSelectable,
       get element() { return overlayEl; },
     };
   }
