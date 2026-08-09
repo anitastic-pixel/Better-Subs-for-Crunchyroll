@@ -19,5 +19,9 @@
   NS.CRSubFix = NS.CRSubFix || {};
   NS.CRSubFix.config = {
     REPORT_ENDPOINT: 'https://better-subs-reports.andrewtristanwillis.workers.dev',
+    // Optional shared secret mirrored in the Worker's REPORT_TOKEN env var.
+    // Leave '' when the Worker doesn't enforce one.  (If you set it in the
+    // Worker but not here, every report/survey silently 401s.)
+    REPORT_TOKEN: '',
   };
 })();

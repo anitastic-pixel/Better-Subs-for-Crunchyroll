@@ -70,7 +70,8 @@ export default {
     // neutralize mass mentions (belt-and-suspenders with allowed_mentions below).
     const clean = (s) => String(s == null ? '' : s)
       .replace(/`/g, 'ˋ')                        // backtick → modifier grave
-      .replace(/@(everyone|here)/gi, '@​$1'); // zero-width break the mention
+      .replace(/@(everyone|here)/gi, '@​$1') // zero-width break the mention
+      .replace(/<!(everyone|here|channel)/gi, '<!​$1'); // Slack's ping syntax (fallback branch)
 
     const text = clean(data && data.text).slice(0, 3800);
     if (!text) return json({ ok: false, error: 'empty' }, 400, cors);

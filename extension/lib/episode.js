@@ -242,8 +242,13 @@
     function getMappedJpGuid() { return STORAGE.lsGet(MAP_PREFIX + guid)?.jpGuid ?? null; }
     function setMappedJpGuid(g) { STORAGE.lsSet(MAP_PREFIX + guid, { jpGuid: g }, MAP_TTL); }
 
-    function getCachedRawText(url) { return STORAGE.ssGet(SESSION_PREFIX + url); }
-    function setCachedRawText(url, text) { STORAGE.ssSet(SESSION_PREFIX + url, text); }
+    // Keyed by the URL's PATH, not the full signed URL: signatures rotate
+    // (t=exp=…~hmac=…), and keying by the full URL would orphan a 100-500 KB
+    // entry per re-signing — the stale-URL recovery path re-signs on purpose —
+    // until sessionStorage (~5 MB) fills and the cache degrades to a no-op.
+    const rawTextKey = (url) => SESSION_PREFIX + String(url).split('?')[0];
+    function getCachedRawText(url) { return STORAGE.ssGet(rawTextKey(url)); }
+    function setCachedRawText(url, text) { STORAGE.ssSet(rawTextKey(url), text); }
 
     function srcCacheKey(g, locale) { return SRC_CACHE_PREFIX + g + '_' + locale; }
     function getCachedSrcUrl(g, locale) { return STORAGE.lsGet(srcCacheKey(g, locale)); }

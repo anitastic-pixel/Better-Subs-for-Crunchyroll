@@ -363,6 +363,7 @@
     'ro-RO': 'Română',            'hu-HU': 'Magyar',
     'ms-MY': 'Bahasa Melayu',     'th-TH': 'ภาษาไทย',
     'id-ID': 'Bahasa Indonesia',  'vi-VN': 'Tiếng Việt',
+    'te-IN': 'తెలుగు',            // seen live 2026-08 (Telugu dub sessions)
   };
   // Short 2-char labels shown on the toggle button while a source is active
   const LOCALE_SHORT = {
@@ -374,7 +375,7 @@
     'pl-PL':'PL','tr-TR':'TR','nl-NL':'NL','fi-FI':'FI',
     'sv-SE':'SV','nb-NO':'NO','da-DK':'DA','cs-CZ':'CS',
     'ro-RO':'RO','hu-HU':'HU','ms-MY':'MS','th-TH':'TH',
-    'id-ID':'ID','vi-VN':'VI',
+    'id-ID':'ID','vi-VN':'VI','te-IN':'TE',
   };
 
   const originalFetch = window.fetch.bind(window);
@@ -1212,10 +1213,14 @@
     // stale (expired-signature) URL can be replaced with a freshly-signed one.
     const resolveUrl = async (forceFresh) => {
       if (locale === 'ja-JP') {
-        if (forceFresh) { if (ep.jpGuid) ep.evictCachedJpData(ep.jpGuid); ep.clearJpUrls(); }
+        // Evict under the SAME guid the fetch below will use — in the
+        // dub-switch-carry state jpGuid is unset and only the persisted guid
+        // map knows it; evicting only ep.jpGuid would leave the stale cached
+        // URL in place and the refetch would cache-hit right back to it.
+        const g = ep.jpGuid ?? ep.getMappedJpGuid?.();
+        if (forceFresh) { if (g) ep.evictCachedJpData(g); ep.clearJpUrls(); }
         let url = forceFresh ? null : (ep.jpCaptionUrl || ep.jpSubtitleUrl);
         if (!url) {
-          const g = ep.jpGuid ?? ep.getMappedJpGuid?.();
           if (g && ep.authHeaders) {
             const d = await fetchAndCacheJpData(g, ep.authHeaders);
             url = d?.captionUrl || d?.subtitleUrl || null;
@@ -1884,7 +1889,9 @@
       return;
     }
 
-    updateProgress(3, 8, `Fetching source ref  (${bridge})`);
+    // escapeHtml: bridge is a locale key from the page's playback JSON and
+    // updateProgress lands in innerHTML — same treatment as the badge stats.
+    updateProgress(3, 8, `Fetching source ref  (${escapeHtml(String(bridge))})`);
     const srcBridgeCues = (bridge === srcLang && cues.length)
       ? cues
       : await fetchAndParseSubs(srcBridgeUrl);
@@ -1894,7 +1901,7 @@
       return;
     }
 
-    updateProgress(4, 8, `Fetching audio ref  (${bridge})`);
+    updateProgress(4, 8, `Fetching audio ref  (${escapeHtml(String(bridge))})`);
     const refBridgeCues = await fetchAndParseSubs(refBridgeUrl);
     if (isStale()) return;
 
@@ -2154,6 +2161,11 @@
   function teardownPageChrome() {
     if (videoEl) videoEl.removeEventListener('play', tryAutoActivate);
     stopSync();
+    // Reset hardsub detection with the episode — a stale true from the
+    // outgoing episode would fire a false "burned-in subtitles" toast if the
+    // next overlay activates before its playback JSON re-runs the watch.
+    stopHardsubWatch();
+    _hardsubStream = false;
     // Through the wrapper so content.js gets a SIGN_ASS clear — a bare write
     // leaves libass rendering the outgoing episode's typeset signs.
     setOverlayActive(false);
@@ -2825,27 +2837,41 @@
   let _hardsubStream     = false;
   let _hardsubObs        = null;
   let _hardsubWarnedGuid = null;
+  function stopHardsubWatch() {
+    _hardsubObs?.disconnect();
+    _hardsubObs = null;
+  }
   function watchForHardsubStream(hardSubsMap) {
     _hardsubStream = false;
+    // Always drop the previous episode's observer FIRST — even when this
+    // episode declares no variants, the old observer's closure (old path set)
+    // must not keep flagging streams for the new episode.
+    stopHardsubWatch();
     const paths = Object.values(hardSubsMap ?? {})
       .map((v) => (typeof v === 'string' ? v : v?.url))
       .filter(Boolean)
       .map((u) => u.split('?')[0]);
     if (!paths.length) return;
     const set = new Set(paths);
-    const test = (name) => {
+    // Exact-path matches (from THIS episode's JSON) are safe against the whole
+    // buffered history; the loose /hardsub/i fallback is only trusted for
+    // entries fetched from now on — an old episode's hardsub segments in the
+    // buffer must not flag the new episode's (possibly clean) stream.
+    const t0 = performance.now();
+    const test = (name, startTime) => {
       if (_hardsubStream) return;
-      if (set.has(name.split('?')[0]) || /hardsub/i.test(name)) {
+      if (set.has(name.split('?')[0]) || (startTime >= t0 && /hardsub/i.test(name))) {
         _hardsubStream = true;
+        stopHardsubWatch();  // verdict reached — no need to keep listening
         // The manifest fetch can land AFTER auto-activation — warn now, not
         // only at the next setOverlayActive(true).
         if (overlayActive) maybeWarnHardsub();
       }
     };
     try {
-      performance.getEntriesByType('resource').forEach((e) => test(e.name));
-      _hardsubObs?.disconnect();
-      _hardsubObs = new PerformanceObserver((list) => list.getEntries().forEach((e) => test(e.name)));
+      performance.getEntriesByType('resource').forEach((e) => test(e.name, e.startTime));
+      if (_hardsubStream) return;  // verdict from the buffer alone
+      _hardsubObs = new PerformanceObserver((list) => list.getEntries().forEach((e) => test(e.name, e.startTime)));
       _hardsubObs.observe({ type: 'resource', buffered: true });
     } catch (_) {}
   }
@@ -4480,7 +4506,17 @@
       storeSessionSubs(currentAudio, sessionSubs, PLAYBACK.captionLocales(data));
       // Watch whether the player picks a burned-in (hardsub) stream variant —
       // if it does and our overlay comes up, maybeWarnHardsub offers the fix.
-      watchForHardsubStream(data.hardSubs ?? data.hardsubs ?? data.hard_subs);
+      // burnedInLocale (new field, 2026-08) names the burned variant of the
+      // served url directly — verified "" on clean streams; non-empty is
+      // treated as burned. The URL observer stays as fallback for responses
+      // that omit the field.
+      if (typeof data.burnedInLocale === 'string' && data.burnedInLocale) {
+        stopHardsubWatch();
+        _hardsubStream = true;
+        if (overlayActive) maybeWarnHardsub();
+      } else {
+        watchForHardsubStream(data.hardSubs ?? data.hardsubs ?? data.hard_subs);
+      }
       log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       const jpVersion = PLAYBACK.jpVersion(data);
