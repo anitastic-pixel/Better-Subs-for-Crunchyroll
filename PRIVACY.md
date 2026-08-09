@@ -50,6 +50,17 @@ before anything is sent.** Reports are delivered to a private developer channel,
 used solely to diagnose and fix bugs, and are never sold, shared with
 advertisers, or used for any unrelated purpose.
 
+## The voluntary survey
+
+The popup's **Quick survey** (under Help & feedback) works the same way: it
+sends nothing until you press **Send survey**, and the payload is only your
+answers — which features you use (checkboxes), an optional note, an optional
+1–5 rating — plus, if you leave **Include settings snapshot** ticked, a list
+of on/off feature flags (e.g. `mtEnabled=true`). No episode, page, history, or
+identifying information is ever part of a survey. It goes to the same private
+developer channel as problem reports and is used only to prioritize what to
+build next.
+
 ## Network activity
 
 The extension only ever talks to **Crunchyroll's own servers**

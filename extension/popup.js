@@ -852,6 +852,13 @@ const reportNote      = document.getElementById('reportNote');
 const reportGithub    = document.getElementById('reportGithub');
 const ISSUES_URL      = 'https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues/new';
 const REPORT_ENDPOINT = (self.CRSubFix.config && self.CRSubFix.config.REPORT_ENDPOINT) || '';
+const REPORT_TOKEN    = (self.CRSubFix.config && self.CRSubFix.config.REPORT_TOKEN) || '';
+// Content-Type plus the optional shared-secret header the Worker enforces
+// when its REPORT_TOKEN env var is set.
+const reportHeaders = () => ({
+  'Content-Type': 'application/json',
+  ...(REPORT_TOKEN ? { 'X-Better-Subs-Token': REPORT_TOKEN } : {}),
+});
 
 // Coarse, non-identifying platform string (OS family + Chrome major).  We never
 // send the full User-Agent — it's a fingerprinting surface — at any level.
@@ -919,7 +926,7 @@ reportSend?.addEventListener('click', async () => {
   try {
     const resp = await fetch(REPORT_ENDPOINT, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: reportHeaders(),
       body:    JSON.stringify({ text: bundle }),
     });
     ok = resp.ok;
@@ -929,6 +936,67 @@ reportSend?.addEventListener('click', async () => {
   reportSend.classList.toggle('ok', ok);
   if (ok && reportNote) reportNote.value = '';
   setTimeout(() => { reportSend.textContent = 'Send a report'; reportSend.classList.remove('ok'); }, 3000);
+});
+
+// ── Quick survey ─────────────────────────────────────────────────────────────
+// Voluntary, user-initiated, same worker pipeline as reports.  Payload is the
+// three answers plus (opt-in) a settings snapshot: schema booleans only — which
+// features are enabled — never history, titles, or identifiers.
+const surveySend = document.getElementById('surveySend');
+const surveyRate = document.getElementById('surveyRate');
+let surveyRating = 0;
+
+surveyRate?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-v]');
+  if (!btn) return;
+  surveyRating = Number(btn.dataset.v);
+  surveyRate.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b === btn));
+});
+
+surveySend?.addEventListener('click', async () => {
+  if (!REPORT_ENDPOINT) {
+    surveySend.textContent = 'Not configured';
+    setTimeout(() => { surveySend.textContent = 'Send survey'; }, 2500);
+    return;
+  }
+  const feats = [...document.querySelectorAll('.surveyFeat:checked')].map(c => c.value);
+  const note  = (document.getElementById('surveyNote')?.value || '').trim();
+  if (!feats.length && !note && !surveyRating) {
+    surveySend.textContent = 'Pick or write something first';
+    setTimeout(() => { surveySend.textContent = 'Send survey'; }, 2500);
+    return;
+  }
+  surveySend.disabled = true;
+  surveySend.textContent = 'Sending…';
+  const lines = [
+    'SURVEY — Better Subs for Crunchyroll',
+    `version : ${chrome.runtime.getManifest().version}`,
+    `platform: ${coarsePlatform()}`,
+    `uses    : ${feats.join(', ') || '-'}`,
+    `rating  : ${surveyRating ? surveyRating + '/5' : '-'}`,
+  ];
+  if (note) lines.push(`note    : ${note.slice(0, 1500)}`);
+  if (document.getElementById('surveySnapshot')?.checked) {
+    // Booleans from the settings schema only — a feature-flag picture, not data.
+    const s = await new Promise(res => chrome.storage.local.get(self.CRSubFix.settings.defaults(), res));
+    const flags = ['enabled','autoActivate','hideOfficialSubs','showDialogue','showSigns',
+                   'styleOverride','autoPauseLine','mtEnabled']
+      .map(k => `${k}=${!!s[k]}`).join(' ');
+    lines.push(`settings: ${flags}`);
+  }
+  let ok = false;
+  try {
+    const resp = await fetch(REPORT_ENDPOINT, {
+      method:  'POST',
+      headers: reportHeaders(),
+      body:    JSON.stringify({ text: lines.join('\n') }),
+    });
+    ok = resp.ok;
+  } catch (_) { ok = false; }
+  surveySend.disabled = false;
+  surveySend.textContent = ok ? '✓ Thank you!' : '✗ Could not send';
+  surveySend.classList.toggle('ok', ok);
+  setTimeout(() => { surveySend.textContent = 'Send survey'; surveySend.classList.remove('ok'); }, 3000);
 });
 
 // Secondary — open a pre-filled public GitHub issue (the user submits it).
