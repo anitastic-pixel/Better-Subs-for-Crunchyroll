@@ -752,6 +752,12 @@
 
     /* Status hint — an actionable line shown when idle (no active subtitles). */
     .st-hint { font-size: 10px; color: var(--text-dim); margin-top: 9px; line-height: 1.4; }
+    .st-reload {
+      font: inherit; font-weight: 700; color: var(--accent);
+      background: var(--accent-weak); border: 1px solid var(--accent-line);
+      border-radius: var(--radius-sm); padding: 2px 8px; cursor: pointer;
+    }
+    .st-reload:hover { filter: brightness(1.15); }
 
     /* ── Section launcher tiles (2×2) — replace the plain collapsible headers.
           Each tile opens its section (accordion); the open panel renders below. */

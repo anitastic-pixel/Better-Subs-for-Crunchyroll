@@ -168,6 +168,7 @@ const STATUS_DISPLAY = {
   [S.ERROR]:       { color: '#e55',    pulse: false, text: 'Error fetching subtitles — click the player button to retry' },
   [S.UNAVAILABLE]: { color: '#555',    pulse: false, text: 'No subtitles available for this episode' },
   notwatch:        { color: '#555',    pulse: false, text: 'Not on an episode page' },
+  noscript:        { color: '#ffc107', pulse: false, text: 'Extension not active in this tab' },
 };
 
 // Minimal locale-code → friendly name table.  Mirrors the larger map in
@@ -232,7 +233,28 @@ function setStatus(key, info) {
       const resp = await queryStatus();
       setStatus(resp?.jpStatus ?? S.NONE, resp?.activeInfo);
     } catch (_) {
-      setStatus('notwatch');
+      // No content script answered.  If the tab IS Crunchyroll, the script
+      // simply isn't injected — Chrome never injects into tabs that were
+      // already open when the extension was installed or auto-updated, so
+      // every release orphans open episode tabs until they reload.
+      let tab = null;
+      try { [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); } catch (_) {}
+      if (/^https?:\/\/www\.crunchyroll\.com\//.test(tab?.url ?? '')) {
+        setStatus('noscript');
+        const hint = document.getElementById('stHint');
+        if (hint) {
+          hint.textContent = 'This tab was open before the extension loaded — reload it to activate. ';
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'st-reload';
+          b.textContent = 'Reload tab';
+          b.addEventListener('click', () => { chrome.tabs.reload(tab.id); window.close(); });
+          hint.appendChild(b);
+          hint.style.display = '';
+        }
+      } else {
+        setStatus('notwatch');
+      }
     }
   }
 })();
