@@ -52,12 +52,28 @@
 
   // Diagnostic: surface any missing module so a silent bail is visible.
   const NS = self.CRSubFix;
+  // Two copies of this extension installed at once (a store build alongside an
+  // unpacked dev build, say) both inject this file into the page's MAIN world —
+  // which they SHARE.  That means two fetch wrappers on one page, two toggle
+  // listeners, and two rival TOGGLE_TOKENs overwriting each other on <html>,
+  // whose visible symptom is a stream of "sign msg rejected — token mismatch"
+  // warnings from content.js (observed live 2026-08-21: the attribute flipping
+  // between two values on one document).  First one in wins; later ones stand
+  // down rather than fight.
+  if (window.__crSubFixInstalled) {
+    console.warn('[CR Sub Fix] another copy of this extension is already running on this page — standing down. Remove the duplicate install.');
+    return;
+  }
   if (!NS) { console.warn('[CR Sub Fix] interceptor.js bail: self.CRSubFix is undefined'); return; }
   const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme','learning'].filter(k => !NS[k]);
   if (_missing.length) {
     console.warn('[CR Sub Fix] interceptor.js bail: missing modules:', _missing, 'present:', Object.keys(NS));
     return;
   }
+  // Claim the page only once we know this copy can actually run — a copy that
+  // bails above must leave the field to the other one.
+  window.__crSubFixInstalled = true;
+
   // Wrap the rest of the IIFE so any throw is logged instead of silenced.
   try {
 
