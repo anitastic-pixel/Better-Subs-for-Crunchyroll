@@ -216,6 +216,39 @@ section('Learning mode (audio-matched stack)');
     { primary: '', secondary: '', audioMatched: false, nativeAvailable: false });
 }
 
+// ── 2d-bis. Playback — clean (subtitle-free) stream pick ─────────────────────
+// hide-official empties hardSubs so the player falls back to `url`; these are
+// the real response shapes captured live 2026-08-21 (Re:Zero S3 E1 GQJUMNE75
+// ja-JP + its en-US dub GPWU8N7D5).
+section('Playback — cleanStreamUrl');
+{
+  const PB = NS.playbackApi;
+  const CLEAN = 'https://www.crunchyroll.com/playback/v2/manifest/GQJUMNE75/static/e00345477a00345478jajp/1/clean/dash/manifest.mpd';
+  const BURNED = CLEAN.replace('/1/clean/', '/0/en-US/');
+  const live = {
+    url: CLEAN,
+    hardSubs: { 'en-US': { hlang: 'en-US', url: BURNED, quality: 'adaptive' },
+                none:    { hlang: 'none',  url: CLEAN,  quality: 'adaptive' } },
+    subtitles: { 'en-US': { format: 'ass', language: 'en-US', url: 'SUB' },
+                 none:    { language: 'none', url: '' } },
+  };
+  eq('picks the hardSubs "none" variant', PB.cleanStreamUrl(live), CLEAN);
+  // If CR ever serves the burned variant as the top-level url (viewer subtitle
+  // preference set), the "none" entry still gives us a clean fallback.
+  eq('none entry wins over a burned top-level url',
+    PB.cleanStreamUrl({ ...live, url: BURNED }), CLEAN);
+  // No "none" entry: only a /1/clean/ top-level url counts.
+  eq('falls back to a clean top-level url',
+    PB.cleanStreamUrl({ url: CLEAN, hardSubs: { 'en-US': { url: BURNED } } }), CLEAN);
+  eq('burned url with no none entry → null',
+    PB.cleanStreamUrl({ url: BURNED, hardSubs: { 'en-US': { url: BURNED } } }), null);
+  eq('no url at all → null', PB.cleanStreamUrl({ hardSubs: {} }), null);
+  eq('tolerates absent data', [PB.cleanStreamUrl({}), PB.cleanStreamUrl(null)], [null, null]);
+  // The url-less `none` key in `subtitles` must not leak into the picker as a
+  // language (it is CR's "no subtitles" menu row, not a track).
+  eq('subtitleMap drops the url-less none key', Object.keys(PB.subtitleMap(live)), ['en-US']);
+}
+
 // ── 2e. Catalog — dub CC (captions-sourced) resolution ───────────────────────
 // Regression for the "English CC missing" report: on a dub, CR ships the CC
 // (full transcript of the SPOKEN dialogue, timed to the playing cut) under the

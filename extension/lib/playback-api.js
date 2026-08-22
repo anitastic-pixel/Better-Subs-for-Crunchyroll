@@ -19,6 +19,7 @@
  *   CRSubFix.playbackApi.pickEn(rawCaptionsOrSubs)  → best English url | null
  *   CRSubFix.playbackApi.jpVersion(data)            → ja-JP version obj | null
  *   CRSubFix.playbackApi.audioVersions(data)        → [{ locale, guid }]
+ *   CRSubFix.playbackApi.cleanStreamUrl(data)       → subtitle-free stream url | null
  */
 (function () {
   'use strict';
@@ -75,6 +76,25 @@
     return null;
   }
 
+  // The subtitle-free ("clean") video variant Crunchyroll publishes for this
+  // session.  Live-verified 2026-08-21 (Re:Zero S3 E1, ja-JP session AND its
+  // en-US dub session): hardSubs carries a literal "none" entry
+  // { hlang:'none', url:'…/1/clean/dash/manifest.mpd', quality:'adaptive' } —
+  // the same URL behind the "None" item in CR's own subtitle menu.  Every other
+  // hardSubs entry points at a burned variant under /0/<locale>/.
+  //
+  // Hide-official empties hardSubs so the player falls back to the top-level
+  // url; preferring this entry as that fallback keeps it landing on a clean
+  // stream even where CR serves a burned variant as `url`.  null = CR ships no
+  // subtitle-free video here, so hide-official cannot help.
+  function cleanStreamUrl(data) {
+    const hs   = data?.hardSubs ?? data?.hardsubs ?? data?.hard_subs;
+    const none = hs && (hs.none ?? hs.None);
+    const u    = entryUrl(none);
+    if (u) return u;
+    return (typeof data?.url === 'string' && data.url.includes('/1/clean/')) ? data.url : null;
+  }
+
   // The ja-JP entry in data.versions, or null.
   function jpVersion(data) {
     return (data?.versions ?? []).find(v => v.audio_locale === 'ja-JP') ?? null;
@@ -92,5 +112,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions };
+  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions, cleanStreamUrl };
 })();

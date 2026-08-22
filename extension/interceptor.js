@@ -471,15 +471,30 @@
       else if (name === 'signs')    saveSetting('showSigns', !!on);
       else if (name === 'official') {
         saveSetting('hideOfficialSubs', !on);
-        // Burned-in (hardsub) streams can only change on a fresh playback
-        // load — hiding takes a reload; the DOM suppression layers handle
-        // everything else live.
-        if (!on && _hardsubStream) {
-          showErrorToast(
-            'This video has Crunchyroll subtitles burned in — reload to remove them.',
-            () => setTimeout(() => location.reload(), 400),
-            'Reload'
-          );
+        // Burned-in (hardsub) subtitles are pixels, so the DOM suppression
+        // layers can't touch them — switching CR's own track to "None" can,
+        // live; a reload is only the fallback when that menu isn't there.
+        if (!on) {
+          // Live first: drive CR's own "None" row so burned-in subs go NOW.
+          // The saved setting above still covers every later playback load.
+          crSubtitlesOff().then((live) => {
+            if (live) {
+              showErrorToast("Crunchyroll's subtitles turned off (its own player setting).", null, 'OK');
+            } else if (_noCleanStream) {
+              showErrorToast(
+                "Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.",
+                null, 'OK');
+            } else if (_hardSubCount) {
+              showErrorToast(
+                'This video has Crunchyroll subtitles burned in — reload to remove them.',
+                () => setTimeout(() => location.reload(), 400),
+                'Reload');
+            }
+          });
+        } else if (_turnedCrSubsOff) {
+          // We set CR's own preference to None and cannot read back what it was
+          // before — say so rather than leaving the viewer with no subs at all.
+          showErrorToast("Pick a language in Crunchyroll's subtitle menu to bring its own subtitles back.", null, 'OK');
         }
       }
     },
@@ -2166,6 +2181,8 @@
     // next overlay activates before its playback JSON re-runs the watch.
     stopHardsubWatch();
     _hardsubStream = false;
+    _noCleanStream = false;
+    _hardSubCount  = 0;   // stale count would let crSubtitlesOff trust the wrong menu
     // Through the wrapper so content.js gets a SIGN_ASS clear — a bare write
     // leaves libass rendering the outgoing episode's typeset signs.
     setOverlayActive(false);
@@ -2835,6 +2852,12 @@
   // playback JSON gives the variant manifest URLs; a buffered PerformanceObserver
   // watches for the player fetching one (exact path match, query stripped).
   let _hardsubStream     = false;
+  // Some titles ship NO subtitle-free video for an audio locale (CR own UI
+  // drops the "None" subtitle option there).  Hide-official works by dropping
+  // hardSubs so the player falls back to the top-level url — useless when that
+  // url is itself a burned variant (/0/<locale>/ path).  Then say so instead of
+  // offering a fix that cannot work.
+  let _noCleanStream     = false;
   let _hardsubObs        = null;
   let _hardsubWarnedGuid = null;
   function stopHardsubWatch() {
@@ -2875,13 +2898,62 @@
       _hardsubObs.observe({ type: 'resource', buffered: true });
     } catch (_) {}
   }
+  // ── "No subtitles" — switch Crunchyroll's own stream variant ───────────────
+  // Burned-in subtitles are a stream VARIANT, so nothing in the page can hide
+  // them; the only LIVE remedy is to make CR switch variants.  Its track menu's
+  // subtitle group ends with a "None" row, which maps to hardSubs.none — the
+  // /1/clean/ manifest.  Verified live 2026-08-21: a synthetic click on that row
+  // switches the stream and fires CR's own PATCH /accounts/v2/me/multiprofile/
+  // <id>, no page reload.  Two consequences:
+  //   • it writes the viewer's Crunchyroll-WIDE subtitle preference, so it only
+  //     ever runs from an explicit user action, never automatically;
+  //   • the row labels are localized, so the row is found by SHAPE (last row of
+  //     the last menu group) and only clicked when that group's row count
+  //     matches this session's hardSubs count — otherwise we don't guess.
+  let _hardSubCount     = 0;      // hardSubs entries in this session's playback JSON
+  let _turnedCrSubsOff  = false;  // we drove CR's menu at least once this page
+  const TRACK_MENU_SEL  = '[data-testid="audio-text-track-menu"]';
+  function subtitleMenuRows() {
+    const menu   = document.querySelector(TRACK_MENU_SEL);
+    const groups = menu
+      ? [...menu.querySelectorAll('[role="menu"]')].filter((g) => g.querySelector('[role="menuitemradio"]'))
+      : [];
+    return groups.length >= 2 ? [...groups[groups.length - 1].querySelectorAll('[role="menuitemradio"]')] : [];
+  }
+  async function crSubtitlesOff() {
+    const btn = document.querySelector('[data-testid="track-selection-button"]');
+    if (!btn || !_hardSubCount) return false;
+    const nap     = (ms) => new Promise((r) => setTimeout(r, ms));
+    const wasOpen = subtitleMenuRows().length > 0;
+    if (!wasOpen) btn.click();
+    let rows = [];
+    for (let i = 0; i < 12 && !rows.length; i++) { await nap(100); rows = subtitleMenuRows(); }
+    if (rows.length !== _hardSubCount) {
+      log.warn(`No-subtitles: subtitle menu has ${rows.length} rows, session has ${_hardSubCount} hardsub variants — leaving CR's menu alone.`);
+      if (!wasOpen && subtitleMenuRows().length) btn.click();
+      return false;
+    }
+    rows[rows.length - 1].click();          // "None"
+    await nap(300);
+    if (subtitleMenuRows().length) btn.click();   // close it again
+    _turnedCrSubsOff = true;
+    log.info("No-subtitles: switched Crunchyroll's own subtitle track to None.");
+    return true;
+  }
+
   // Once per episode, when our overlay is up over a burned-in-subtitle stream:
   // offer the fix (turn on hide-official + reload) instead of silently drawing
   // a second subtitle band over Crunchyroll's.
   function maybeWarnHardsub() {
     const ep = currentEp();
-    if (!ep || isHideOfficialSubs() || !_hardsubStream) return;
+    if (!ep || !_hardsubStream) return;
     if (_hardsubWarnedGuid === ep.guid) return;
+    if (_noCleanStream) {
+      _hardsubWarnedGuid = ep.guid;
+      showErrorToast("Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.", null, 'OK');
+      return;
+    }
+    if (isHideOfficialSubs()) return;
     _hardsubWarnedGuid = ep.guid;
     showErrorToast(
       "Crunchyroll's subtitles are burned into this video stream.",
@@ -4431,14 +4503,19 @@
         // Soft-sub maps (older player rendered from these).
         data.captions  = {};
         data.subtitles = {};
-        // The newer player serves HARDSUBBED video — the subtitle is burned into
-        // the picture, picked from this hardSubs map by the viewer's subtitle
-        // preference.  Empty it so the player falls back to the raw top-level
-        // stream URL and the burned-in text never appears.  Only when a raw url
-        // exists, so we never strand the player with no stream.
-        if (data.url && data.hardSubs)  data.hardSubs  = {};
-        if (data.url && data.hardsubs)  data.hardsubs  = {};
-        if (data.url && data.hard_subs) data.hard_subs = {};
+        // The newer player serves HARDSUBBED video — the subtitle is burned
+        // into the picture, picked from this hardSubs map by the viewer's
+        // subtitle preference.  Point url at CR's own subtitle-free variant and
+        // empty the map, so the player falls back to that clean stream and the
+        // burned-in text never appears.  Only when such a variant exists, so we
+        // never strand the player with no stream.
+        const clean = PLAYBACK.cleanStreamUrl(data);
+        if (clean) {
+          data.url = clean;
+          if (data.hardSubs)  data.hardSubs  = {};
+          if (data.hardsubs)  data.hardsubs  = {};
+          if (data.hard_subs) data.hard_subs = {};
+        }
       }
       const headers = {};
       response.headers.forEach((v, k) => { headers[k] = v; });
@@ -4510,6 +4587,11 @@
       // served url directly — verified "" on clean streams; non-empty is
       // treated as burned. The URL observer stays as fallback for responses
       // that omit the field.
+      _hardSubCount = Object.keys(data.hardSubs ?? data.hardsubs ?? data.hard_subs ?? {}).length;
+      // No hardSubs.none AND no /1/clean/ top-level url = CR ships no
+      // subtitle-free video for this session, so hide-official cannot help.
+      _noCleanStream = !PLAYBACK.cleanStreamUrl(data);
+      if (_noCleanStream) log.info(`No clean stream variant for [${currentAudio}] (url: ${String(data.url || "none").split("?")[0].slice(-60)}) — hide-official cannot remove burned-in subs.`);
       if (typeof data.burnedInLocale === 'string' && data.burnedInLocale) {
         stopHardsubWatch();
         _hardsubStream = true;
