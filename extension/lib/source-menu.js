@@ -501,7 +501,7 @@
         menuEl.appendChild(makeToggleRow('Typeset signs', layer('signs', true),
           (on) => toggle('signs', on), 'On-screen text — signs, titles, captions'));
         menuEl.appendChild(makeToggleRow('Crunchyroll’s own subtitles', layer('official', false),
-          (on) => toggle('official', on), 'Turn off to hide CR’s built-in subtitles'));
+          (on) => toggle('official', on), 'Turn off to set CR’s own subtitle track to None'));
         return;
       }
 

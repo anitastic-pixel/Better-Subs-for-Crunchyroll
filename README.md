@@ -19,6 +19,7 @@ A Chrome extension that lets you mix and match subtitle languages independently 
 - **Source picker** — on-player dropdown lists every available subtitle locale with live validation badges so you can see at a glance which sources are usable, plus a "Custom" section for your uploads and translations
 - **ASS overlay with full typesetting support** — renders subtitles via a custom overlay that supports positioned signs, per-dialogue style tags, and fade animations, matching the original subtitle file's intent. Positioned signs are rendered with the real libass engine for pixel-accurate typesetting
 - **Subtitle validation** — automatically detects cross-linked wrong-title subtitle files (duration mismatch) and probes other dub sessions for a working replacement
+- **Turn Crunchyroll's own subtitles off** — Crunchyroll burns its subtitles into the video itself, so no amount of CSS can hide them. The *Crunchyroll's own subtitles* switch sets Crunchyroll's own subtitle track to **None**, which swaps the player to the subtitle-free stream on the spot — and keeps later episodes clean too
 - **Auto-activate** — optionally activate your preferred subtitle source automatically when an episode starts
 - **Subtitle size** — scale subtitles from 25% to 250%
 - **Sync offset** — shift subtitle timing in 0.1s increments, up to ±60 minutes
@@ -87,6 +88,8 @@ Click the source label next to the button to open the **source picker** and swit
 | no subs | No subtitle file found for this locale |
 
 The picker also has a **Show on screen ›** submenu — toggle the **dialogue**, the **typeset signs**, and **Crunchyroll's own subtitles** on or off independently (keep the translated signs but hide the dialogue, hide signs you don't need, and so on). The same toggles are in the popup under *Show on screen*.
+
+> **Crunchyroll's own subtitles** is not a CSS switch. Crunchyroll burns its subtitles into the video stream, so turning it off sets **Crunchyroll's own subtitle preference to None** — the same thing you'd pick in Crunchyroll's subtitle menu, which is account-wide and applies to everything you watch. Turning it back on doesn't restore your old language (Crunchyroll doesn't tell us what it was); pick it again in Crunchyroll's own subtitle menu.
 
 ### Custom sources — bring your own subtitles
 

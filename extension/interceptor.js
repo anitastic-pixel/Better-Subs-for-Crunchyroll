@@ -485,34 +485,9 @@
     onSetLayer: (name, on) => {
       if (name === 'dialogue')      saveSetting('showDialogue', !!on);
       else if (name === 'signs')    saveSetting('showSigns', !!on);
-      else if (name === 'official') {
-        saveSetting('hideOfficialSubs', !on);
-        // Burned-in (hardsub) subtitles are pixels, so the DOM suppression
-        // layers can't touch them — switching CR's own track to "None" can,
-        // live; a reload is only the fallback when that menu isn't there.
-        if (!on) {
-          // Live first: drive CR's own "None" row so burned-in subs go NOW.
-          // The saved setting above still covers every later playback load.
-          crSubtitlesOff().then((live) => {
-            if (live) {
-              showErrorToast("Crunchyroll's subtitles turned off (its own player setting).", null, 'OK');
-            } else if (_noCleanStream) {
-              showErrorToast(
-                "Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.",
-                null, 'OK');
-            } else if (_subMenuRows) {
-              showErrorToast(
-                'This video has Crunchyroll subtitles burned in — reload to remove them.',
-                () => setTimeout(() => location.reload(), 400),
-                'Reload');
-            }
-          });
-        } else if (_turnedCrSubsOff) {
-          // We set CR's own preference to None and cannot read back what it was
-          // before — say so rather than leaving the viewer with no subs at all.
-          showErrorToast("Pick a language in Crunchyroll's subtitle menu to bring its own subtitles back.", null, 'OK');
-        }
-      }
+      // Just save it — the live switch hangs off the SETTING change below, so
+      // the popup's copy of this toggle behaves identically to this one.
+      else if (name === 'official') saveSetting('hideOfficialSubs', !on);
     },
     onLoadFile:      ()       => promptLoadFile(),
     onRemoveCustom:  (id)     => removeCustomSource(id),
@@ -2194,8 +2169,7 @@
     stopSync();
     // Reset hardsub detection with the episode — a stale true from the
     // outgoing episode would fire a false "burned-in subtitles" toast if the
-    // next overlay activates before its playback JSON re-runs the watch.
-    stopHardsubWatch();
+    // next overlay activates before its playback JSON lands.
     _hardsubStream = false;
     _noCleanStream = false;
     _subMenuRows   = 0;   // stale count would let crSubtitlesOff trust the wrong menu
@@ -2416,6 +2390,7 @@
     // Pick up live changes to "hide official subs" (and the master enable
     // toggle) without waiting for the overlay to be touched.
     syncSubSuppression();
+    onHideOfficialSetting();
   }).observe(html, { attributes: true, attributeFilter: SETTINGS.ATTRS });
 
   // Called from the playback / JP-first / prefetch success paths after JP
@@ -2859,61 +2834,60 @@
   function setOverlayActive(v) { overlayActive = v; pushSignLayer(); if (v) maybeWarnHardsub(); }
 
   // ── Hardsub-stream detection ───────────────────────────────────────────────
-  // The newer CR player ships subtitles BURNED INTO the video (a per-language
+  // The CR player ships subtitles BURNED INTO the video (a per-language
   // "hardsub" stream variant picked by the viewer's CR subtitle preference).
   // Burned pixels are the one thing subSuppression's DOM/CSS/TextTrack layers
-  // can't touch, so a user with a CR subtitle language set sees CR's subs UNDER
-  // ours.  The only remedy is the playback-JSON hardSubs strip (hide-official),
-  // which applies on the next playback load — hence a reload.  Detection:
-  // playback JSON gives the variant manifest URLs; a buffered PerformanceObserver
-  // watches for the player fetching one (exact path match, query stripped).
+  // can't touch, so a viewer with a CR subtitle language set sees CR's subs
+  // UNDER ours.
+  //
+  // The only signal we get is the playback JSON's burnedInLocale.  A
+  // PerformanceObserver used to watch for the player fetching a hardsub variant
+  // manifest; removed 2026-08-21 after live proof it can never fire — the
+  // player loads manifest and segments from a worker (no iframe, zero media
+  // entries in this document's resource timeline) and the URLs carry no
+  // "hardsub" substring either.  Detection is therefore best-effort; the fix
+  // itself doesn't depend on it — the viewer has the ▾ Show → "Crunchyroll's
+  // own subtitles" switch.
   let _hardsubStream     = false;
-  // Some titles ship NO subtitle-free video for an audio locale (CR own UI
-  // drops the "None" subtitle option there).  Hide-official works by dropping
-  // hardSubs so the player falls back to the top-level url — useless when that
-  // url is itself a burned variant (/0/<locale>/ path).  Then say so instead of
-  // offering a fix that cannot work.
+  // Some titles could ship NO subtitle-free video for an audio locale, leaving
+  // hide-official nothing to fall back to.  Then say so instead of offering a
+  // fix that cannot work.
   let _noCleanStream     = false;
-  let _hardsubObs        = null;
   let _hardsubWarnedGuid = null;
-  function stopHardsubWatch() {
-    _hardsubObs?.disconnect();
-    _hardsubObs = null;
-  }
-  function watchForHardsubStream(hardSubsMap) {
-    _hardsubStream = false;
-    // Always drop the previous episode's observer FIRST — even when this
-    // episode declares no variants, the old observer's closure (old path set)
-    // must not keep flagging streams for the new episode.
-    stopHardsubWatch();
-    const paths = Object.values(hardSubsMap ?? {})
-      .map((v) => (typeof v === 'string' ? v : v?.url))
-      .filter(Boolean)
-      .map((u) => u.split('?')[0]);
-    if (!paths.length) return;
-    const set = new Set(paths);
-    // Exact-path matches (from THIS episode's JSON) are safe against the whole
-    // buffered history; the loose /hardsub/i fallback is only trusted for
-    // entries fetched from now on — an old episode's hardsub segments in the
-    // buffer must not flag the new episode's (possibly clean) stream.
-    const t0 = performance.now();
-    const test = (name, startTime) => {
-      if (_hardsubStream) return;
-      if (set.has(name.split('?')[0]) || (startTime >= t0 && /hardsub/i.test(name))) {
-        _hardsubStream = true;
-        stopHardsubWatch();  // verdict reached — no need to keep listening
-        // The manifest fetch can land AFTER auto-activation — warn now, not
-        // only at the next setOverlayActive(true).
-        if (overlayActive) maybeWarnHardsub();
+
+  // Hide-official can be flipped from the ▾ menu OR the popup, so the live
+  // switch hangs off the SETTING, not off either control — the popup's click
+  // happens in its own document, so anything keyed to a gesture in THIS one
+  // (navigator.userActivation) would leave the popup's copy dead.
+  //
+  // Safe because the setting only ever changes when a human flips one of those
+  // two switches (chrome.storage.local, no cross-device sync), and the very
+  // first observation is recorded without acting on it — so the settings write
+  // at page load can't drive CR's menu on its own.
+  let _wasHideOfficial = null;
+  function onHideOfficialSetting() {
+    const now  = isHideOfficialSubs();
+    const prev = _wasHideOfficial;
+    _wasHideOfficial = now;
+    if (prev === null || prev === now) return;   // first read, or no change
+    if (!now) {
+      // Turned CR's own subtitles back ON.  We set its preference to None and
+      // can't read back what it was before, so point at the menu that can.
+      if (_turnedCrSubsOff) showErrorToast("Pick a language in Crunchyroll's subtitle menu to bring its own subtitles back.", null, 'OK');
+      return;
+    }
+    crSubtitlesOff().then((live) => {
+      if (live) {
+        showErrorToast("Crunchyroll's subtitles turned off (its own player setting).", null, 'OK');
+      } else if (_noCleanStream) {
+        showErrorToast("Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.", null, 'OK');
+      } else if (_subMenuRows > 1) {
+        showErrorToast('This video has Crunchyroll subtitles burned in — reload to remove them.',
+          () => setTimeout(() => location.reload(), 400), 'Reload');
       }
-    };
-    try {
-      performance.getEntriesByType('resource').forEach((e) => test(e.name, e.startTime));
-      if (_hardsubStream) return;  // verdict from the buffer alone
-      _hardsubObs = new PerformanceObserver((list) => list.getEntries().forEach((e) => test(e.name, e.startTime)));
-      _hardsubObs.observe({ type: 'resource', buffered: true });
-    } catch (_) {}
+    });
   }
+
   // ── "No subtitles" — switch Crunchyroll's own stream variant ───────────────
   // Burned-in subtitles are a stream VARIANT, so nothing in the page can hide
   // them; the only LIVE remedy is to make CR switch variants.  Its track menu's
@@ -2936,9 +2910,18 @@
       : [];
     return groups.length >= 2 ? [...groups[groups.length - 1].querySelectorAll('[role="menuitemradio"]')] : [];
   }
+  let _offBusy = false;
   async function crSubtitlesOff() {
+    // A rapid double-toggle would otherwise interleave two open/close runs.
+    if (_offBusy) return false;
     const btn = document.querySelector('[data-testid="track-selection-button"]');
-    if (!btn || !_subMenuRows) return false;
+    // <= 1 row means the group holds nothing but "None" — no CR subtitles to
+    // turn off, so don't drive the menu (or write the account preference).
+    if (!btn || _subMenuRows <= 1) return false;
+    _offBusy = true;
+    try { return await pickNoneRow(btn); } finally { _offBusy = false; }
+  }
+  async function pickNoneRow(btn) {
     const nap     = (ms) => new Promise((r) => setTimeout(r, ms));
     const wasOpen = subtitleMenuRows().length > 0;
     if (!wasOpen) btn.click();
@@ -2971,10 +2954,12 @@
     }
     if (isHideOfficialSubs()) return;
     _hardsubWarnedGuid = ep.guid;
+    // Saving the setting is enough: onHideOfficialSetting picks it up and does
+    // the live switch, falling back to a reload prompt if that can't run.
     showErrorToast(
       "Crunchyroll's subtitles are burned into this video stream.",
-      () => { saveSetting('hideOfficialSubs', true); setTimeout(() => location.reload(), 400); },
-      'Hide & reload'
+      () => saveSetting('hideOfficialSubs', true),
+      'Turn off'
     );
   }
 
@@ -4367,6 +4352,7 @@
       `browser : ${coarsePlatform()}`,
       `episode : ${getEpisodeGuid() || '-'}`,
       `state   : jpStatus=${el.getAttribute(PROTOCOL.ATTR.JP_STATUS) || '-'} source=${activeInfo.source ?? '-'} audio=${activeInfo.audio ?? '-'}`,
+      `crsubs  : menuRows=${_subMenuRows} clean=${!_noCleanStream} burnedIn=${_hardsubStream} turnedOff=${_turnedCrSubsOff}`,
       `settings: enabled=${SETTINGS.read(el, 'enabled')} auto=${SETTINGS.read(el, 'autoActivate')} hideOfficial=${SETTINGS.read(el, 'hideOfficialSubs')} styleOverride=${SETTINGS.read(el, 'styleOverride')}`,
       `mt      : configured=${el.getAttribute(PROTOCOL.ATTR.MT_CONFIGURED) || '-'} provider=${getMtProvider()} target=${getMtTarget()} source=${getMtSourcePref() || 'auto'}`,
       '--- recent activity (most recent last) ---',
@@ -4597,24 +4583,19 @@
       // carry depend on the row being present.
       const sessionSubs = PLAYBACK.subtitleMap(data);
       storeSessionSubs(currentAudio, sessionSubs, PLAYBACK.captionLocales(data));
-      // Watch whether the player picks a burned-in (hardsub) stream variant —
-      // if it does and our overlay comes up, maybeWarnHardsub offers the fix.
-      // burnedInLocale (new field, 2026-08) names the burned variant of the
-      // served url directly — verified "" on clean streams; non-empty is
-      // treated as burned. The URL observer stays as fallback for responses
-      // that omit the field.
+      // How many rows CR's own Subtitles/CC menu will hold — the shape check
+      // the live "no subtitles" switch validates against before clicking.
       _subMenuRows = PLAYBACK.subtitleMenuRowCount(data);
       // No hardSubs.none AND no /1/clean/ top-level url = CR ships no
       // subtitle-free video for this session, so hide-official cannot help.
       _noCleanStream = !PLAYBACK.cleanStreamUrl(data);
       if (_noCleanStream) log.info(`No clean stream variant for [${currentAudio}] (url: ${String(data.url || "none").split("?")[0].slice(-60)}) — hide-official cannot remove burned-in subs.`);
-      if (typeof data.burnedInLocale === 'string' && data.burnedInLocale) {
-        stopHardsubWatch();
-        _hardsubStream = true;
-        if (overlayActive) maybeWarnHardsub();
-      } else {
-        watchForHardsubStream(data.hardSubs ?? data.hardsubs ?? data.hard_subs);
-      }
+      // burnedInLocale names the burned variant of the served url — "" on a
+      // clean stream, non-empty when CR is burning subs in.  Best-effort: it
+      // read "" even with the account subtitle preference set to English
+      // (verified live 2026-08-21), so its absence proves nothing.
+      _hardsubStream = typeof data.burnedInLocale === 'string' && !!data.burnedInLocale;
+      if (_hardsubStream && overlayActive) maybeWarnHardsub();
       log.info(`[${currentAudio}] session subtitle locales [${Object.keys(sessionSubs).join(', ') || 'none'}]`);
 
       const jpVersion = PLAYBACK.jpVersion(data);
