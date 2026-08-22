@@ -3,7 +3,7 @@
  *
  * Features:
  * 1. JP-first parallel session fetch (avoids 420 on reload)
- * 2. DASH manifest VTT swap (automatic, native "English [CC]" track)
+ * 2. Playback-JSON rewrite: hide Crunchyroll's own (burned-in) subtitles
  * 3. "JP CC" overlay button with ASS typesetting support
  *    - Parses [Script Info], [V4+ Styles], and per-dialogue override tags
  *    - Positions signs using scaled \pos coordinates + alignment transforms
@@ -347,7 +347,6 @@
   document.documentElement.setAttribute(PROTOCOL.ATTR.TOGGLE_TOKEN, TOGGLE_TOKEN);
 
   const PLAYBACK_RE    = /\/playback\/v3\/([^/]+)\/web\/chrome\/play/;
-  const MANIFEST_RE    = /\/dash\/manifest\.mpd/;
   const LOG            = '[CR Sub Fix]';
   const BTN_ID           = 'cr-jp-cc-btn';
   const PROGRESS_ID      = 'cr-bsub-progress';
@@ -2719,26 +2718,6 @@
     }
   }
 
-  // ── DASH manifest swap ─────────────────────────────────────────────────────
-  function swapVttInManifest(xml, jpCaptionUrl) {
-    return xml.replace(
-      /(<AdaptationSet[^>]*mimeType="text\/vtt"[^>]*>[\s\S]*?<BaseURL>)[^<]*([\s\S]*?<\/AdaptationSet>)/,
-      (_, before, after) => `${before}${jpCaptionUrl}${after}`
-    );
-  }
-
-  // "Hide official" path: remove every text/vtt AdaptationSet so Crunchyroll's
-  // player has no subtitle track to fetch or render at all.  This is the only
-  // reliable way to suppress CR's subs on the newer player, whose renderer lives
-  // where our CSS/DOM suppression can't reach — our overlay becomes the sole
-  // subtitle display.
-  function blankVttInManifest(xml) {
-    return xml.replace(
-      /<AdaptationSet\b[^>]*mimeType="text\/vtt"[^>]*>[\s\S]*?<\/AdaptationSet>/g,
-      ''
-    );
-  }
-
   // ── Subtitle parsing ──────────────────────────────────────────────────────
   // ASS / WebVTT parsers, color utils, and normalizeSubText all live in
   // lib/subtitle-parser.js — aliased near the top of this file.
@@ -4476,7 +4455,6 @@
     }
 
     if (PLAYBACK_RE.test(url) && ep) return interceptPlayback(args, url, ep);
-    if (MANIFEST_RE.test(url))       return interceptManifest(args, ep);
 
     // Everything else passes straight through, untouched.
     return passThrough(args);
@@ -4746,33 +4724,6 @@
     }
 
     return response;
-  }
-
-  // ── DASH manifest intercept ──
-  async function interceptManifest(args, ep) {
-    const response = await originalFetch(...args);
-    const hideOfficial = isHideOfficialSubs();
-    const jpCap = ep?.jpCaptionUrl;
-    // Nothing to do unless we're hiding CR's subs or swapping in the JP caption.
-    if (!hideOfficial && !jpCap) return response;
-    try {
-      const xml      = await response.clone().text();
-      // Hide-official wins: strip CR's subtitle track entirely so its renderer
-      // has nothing to show.  Otherwise swap CR's text/vtt to the JP caption so
-      // CR's own renderer displays the replacement (the in-player path).
-      const modified = hideOfficial ? blankVttInManifest(xml) : swapVttInManifest(xml, jpCap);
-      if (modified === xml) {
-        log.warn(hideOfficial ? 'Manifest: no text/vtt AdaptationSet to remove.' : 'Manifest swap: no text/vtt BaseURL found.');
-        return response;
-      }
-      log.info(hideOfficial ? 'Manifest text/vtt track removed (hide official).' : 'Manifest text/vtt swapped to JP caption.');
-      const headers = {};
-      response.headers.forEach((v, k) => { headers[k] = v; });
-      return new Response(modified, { status: response.status, statusText: response.statusText, headers });
-    } catch (err) {
-      log.error('Manifest interceptor error:', err);
-      return response;
-    }
   }
 
   watchForPlayer();
