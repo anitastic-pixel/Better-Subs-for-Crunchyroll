@@ -20,6 +20,7 @@
  *   CRSubFix.playbackApi.jpVersion(data)            → ja-JP version obj | null
  *   CRSubFix.playbackApi.audioVersions(data)        → [{ locale, guid }]
  *   CRSubFix.playbackApi.cleanStreamUrl(data)       → subtitle-free stream url | null
+ *   CRSubFix.playbackApi.subtitleMenuRowCount(data) → rows in CR's Subtitles/CC menu
  */
 (function () {
   'use strict';
@@ -76,6 +77,23 @@
     return null;
   }
 
+  // How many rows Crunchyroll's "Subtitles/CC" menu group holds for this
+  // response: one per captions entry (the "[CC]" rows), one per subtitles entry
+  // that has a url, plus the trailing "None" row.  Verified against two live
+  // menus (2026-08-21): a ja-JP session — 0 captions + 9 subtitles + None = 10
+  // rows — and its en-US dub — 1 caption + 1 subtitle + None = 3 rows
+  // ("English [CC]", "English", "None").
+  //
+  // NOT the hardSubs count: that dub ships 2 hardsub variants (en-US, none) but
+  // 3 menu rows, which is exactly what made the first version of the
+  // "no subtitles" click refuse to fire on dubs.
+  function subtitleMenuRowCount(data) {
+    const withUrl = (m) => Object.values(m ?? {}).filter((e) => entryUrl(e)).length;
+    const hs      = data?.hardSubs ?? data?.hardsubs ?? data?.hard_subs;
+    const hasNone = !!(data?.subtitles && 'none' in data.subtitles) || !!(hs && 'none' in hs);
+    return withUrl(data?.captions) + withUrl(data?.subtitles) + (hasNone ? 1 : 0);
+  }
+
   // The subtitle-free ("clean") video variant Crunchyroll publishes for this
   // session.  Live-verified 2026-08-21 (Re:Zero S3 E1, ja-JP session AND its
   // en-US dub session): hardSubs carries a literal "none" entry
@@ -112,5 +130,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions, cleanStreamUrl };
+  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions, cleanStreamUrl, subtitleMenuRowCount };
 })();

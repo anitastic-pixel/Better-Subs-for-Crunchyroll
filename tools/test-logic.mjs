@@ -247,6 +247,28 @@ section('Playback — cleanStreamUrl');
   // The url-less `none` key in `subtitles` must not leak into the picker as a
   // language (it is CR's "no subtitles" menu row, not a track).
   eq('subtitleMap drops the url-less none key', Object.keys(PB.subtitleMap(live)), ['en-US']);
+
+  // CR's Subtitles/CC menu is built from captions + subtitles + None — NOT from
+  // hardSubs.  Both shapes below were captured live (Re:Zero S3 E1) alongside a
+  // screenshot of the menu they produce, so the row counts are observed, not
+  // guessed: the ja-JP session renders 10 rows, its en-US dub renders 3
+  // ("English [CC]", "English", "None").
+  const JP_LOCALES = ['en-US','de-DE','es-419','es-ES','fr-FR','it-IT','pt-BR','ru-RU','ar-SA'];
+  const jp = { captions: {}, hardSubs: live.hardSubs,
+    subtitles: { ...Object.fromEntries(JP_LOCALES.map((l) => [l, { format: 'ass', language: l, url: 'U_' + l }])),
+                 none: { language: 'none', url: '' } } };
+  eq('menu rows — ja-JP session (0 captions + 9 subtitles + None)', PB.subtitleMenuRowCount(jp), 10);
+  const dub = {
+    captions:  { 'en-US': { format: 'vtt', language: 'en-US', url: 'CC' } },
+    subtitles: { 'en-US': { format: 'ass', language: 'en-US', url: 'SUB' },
+                 none:    { language: 'none', url: '' } },
+    hardSubs:  { 'en-US': { hlang: 'en-US', url: BURNED }, none: { hlang: 'none', url: CLEAN } },
+  };
+  eq('menu rows — en-US dub (CC + sub + None), the case the hardSubs count got wrong',
+    PB.subtitleMenuRowCount(dub), 3);
+  eq('hardSubs count would have said 2 (regression guard)', Object.keys(dub.hardSubs).length, 2);
+  eq('no None entry → no None row', PB.subtitleMenuRowCount({ subtitles: { 'en-US': { url: 'U' } } }), 1);
+  eq('tolerates absent maps', [PB.subtitleMenuRowCount({}), PB.subtitleMenuRowCount(null)], [0, 0]);
 }
 
 // ── 2e. Catalog — dub CC (captions-sourced) resolution ───────────────────────

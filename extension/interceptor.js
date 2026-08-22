@@ -484,7 +484,7 @@
               showErrorToast(
                 "Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.",
                 null, 'OK');
-            } else if (_hardSubCount) {
+            } else if (_subMenuRows) {
               showErrorToast(
                 'This video has Crunchyroll subtitles burned in — reload to remove them.',
                 () => setTimeout(() => location.reload(), 400),
@@ -2182,7 +2182,7 @@
     stopHardsubWatch();
     _hardsubStream = false;
     _noCleanStream = false;
-    _hardSubCount  = 0;   // stale count would let crSubtitlesOff trust the wrong menu
+    _subMenuRows   = 0;   // stale count would let crSubtitlesOff trust the wrong menu
     // Through the wrapper so content.js gets a SIGN_ASS clear — a bare write
     // leaves libass rendering the outgoing episode's typeset signs.
     setOverlayActive(false);
@@ -2909,8 +2909,8 @@
   //     ever runs from an explicit user action, never automatically;
   //   • the row labels are localized, so the row is found by SHAPE (last row of
   //     the last menu group) and only clicked when that group's row count
-  //     matches this session's hardSubs count — otherwise we don't guess.
-  let _hardSubCount     = 0;      // hardSubs entries in this session's playback JSON
+  //     matches what this session's tracks predict — otherwise we don't guess.
+  let _subMenuRows      = 0;      // rows CR's Subtitles/CC group should have
   let _turnedCrSubsOff  = false;  // we drove CR's menu at least once this page
   const TRACK_MENU_SEL  = '[data-testid="audio-text-track-menu"]';
   function subtitleMenuRows() {
@@ -2922,14 +2922,14 @@
   }
   async function crSubtitlesOff() {
     const btn = document.querySelector('[data-testid="track-selection-button"]');
-    if (!btn || !_hardSubCount) return false;
+    if (!btn || !_subMenuRows) return false;
     const nap     = (ms) => new Promise((r) => setTimeout(r, ms));
     const wasOpen = subtitleMenuRows().length > 0;
     if (!wasOpen) btn.click();
     let rows = [];
     for (let i = 0; i < 12 && !rows.length; i++) { await nap(100); rows = subtitleMenuRows(); }
-    if (rows.length !== _hardSubCount) {
-      log.warn(`No-subtitles: subtitle menu has ${rows.length} rows, session has ${_hardSubCount} hardsub variants — leaving CR's menu alone.`);
+    if (rows.length !== _subMenuRows) {
+      log.warn(`No-subtitles: subtitle menu has ${rows.length} rows, this session's tracks say ${_subMenuRows} — leaving CR's menu alone.`);
       if (!wasOpen && subtitleMenuRows().length) btn.click();
       return false;
     }
@@ -4587,7 +4587,7 @@
       // served url directly — verified "" on clean streams; non-empty is
       // treated as burned. The URL observer stays as fallback for responses
       // that omit the field.
-      _hardSubCount = Object.keys(data.hardSubs ?? data.hardsubs ?? data.hard_subs ?? {}).length;
+      _subMenuRows = PLAYBACK.subtitleMenuRowCount(data);
       // No hardSubs.none AND no /1/clean/ top-level url = CR ships no
       // subtitle-free video for this session, so hide-official cannot help.
       _noCleanStream = !PLAYBACK.cleanStreamUrl(data);
