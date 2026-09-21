@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Better Subs — store asset generator</title>
+<style>
+  body { background:#0d0d14; color:#ddd; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; margin:0; padding:24px; }
+  h1 { font-size:18px; color:#ff6b35; margin:0 0 4px; }
+  p.note { color:#888; font-size:13px; margin:0 0 20px; }
+  .item { margin-bottom:30px; }
+  .item .lbl { font-size:13px; color:#aaa; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+  .item .lbl b { color:#fff; }
+  .item canvas { max-width:640px; height:auto; border:1px solid #222; border-radius:6px; display:block; }
+  button { background:#ff6b35; color:#fff; border:0; border-radius:6px; padding:7px 14px; font-size:13px; font-weight:700; cursor:pointer; }
+  #all { font-size:15px; padding:11px 22px; margin-bottom:20px; }
+</style>
+</head>
+<body>
+  <h1>Better Subs — store asset generator</h1>
+  <p class="note">Each canvas is rendered at its exact target size (DPI-independent) and exported as a 24-bit PNG with no alpha. Click "Download all" (allow multiple downloads when Chrome asks), or download each individually.</p>
+  <button id="all">⬇ Download all (7)</button>
+  <div id="out"></div>
+
+<script>
+const NAVY1='#1a1a2e', NAVY2='#16213e', ORANGE='#ff6b35', SANS="-apple-system,'Segoe UI',Roboto,sans-serif", SUBFONT="'Trebuchet MS','Segoe UI',sans-serif";
+
+// ── canvas toolkit ──────────────────────────────────────────────────────────
+function rr(ctx,x,y,w,h,r){ r=Math.min(r,w/2,h/2); ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function fillRR(ctx,x,y,w,h,r,fill){ rr(ctx,x,y,w,h,r); ctx.fillStyle=fill; ctx.fill(); }
+function strokeRR(ctx,x,y,w,h,r,stroke,lw){ rr(ctx,x,y,w,h,r); ctx.strokeStyle=stroke; ctx.lineWidth=lw; ctx.stroke(); }
+
+function blob(ctx,cx,cy,rx,ry,c0,c1){ ctx.save(); ctx.translate(cx,cy); ctx.scale(rx,ry);
+  const g=ctx.createRadialGradient(0,0,0,0,0,1); g.addColorStop(0,c0); g.addColorStop(0.72,c1); g.addColorStop(1,c1);
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,1,0,7); ctx.fill(); ctx.restore(); }
+
+function sceneDusk(ctx,W,H){
+  const g=ctx.createLinearGradient(0,0,W*0.3,H); g.addColorStop(0,'#1c0930'); g.addColorStop(1,'#060309');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+  blob(ctx,W*0.22,H*0.28,W*0.42,H*0.5,'rgba(255,213,74,0.36)','rgba(255,213,74,0)');
+  blob(ctx,W*0.78,H*0.58,W*0.40,H*0.48,'rgba(255,61,110,0.40)','rgba(255,61,110,0)');
+  blob(ctx,W*0.52,H*1.0,W*0.5,H*0.55,'rgba(107,59,255,0.40)','rgba(107,59,255,0)');
+  blob(ctx,W*0.9,H*0.12,W*0.34,H*0.4,'rgba(22,224,168,0.26)','rgba(22,224,168,0)');
+  blob(ctx,W*0.08,H*0.9,W*0.45,H*0.5,'rgba(255,122,31,0.34)','rgba(255,122,31,0)');
+  ctx.globalCompositeOperation='source-over';
+}
+function sceneCool(ctx,W,H){
+  const g=ctx.createLinearGradient(0,0,W*0.3,H); g.addColorStop(0,'#122046'); g.addColorStop(0.55,'#1a0a2e'); g.addColorStop(1,'#07060f');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+  blob(ctx,W*0.28,H*0.30,W*0.45,H*0.5,'rgba(120,200,255,0.36)','rgba(120,200,255,0)');
+  blob(ctx,W*0.78,H*0.38,W*0.42,H*0.45,'rgba(255,90,140,0.38)','rgba(255,90,140,0)');
+  blob(ctx,W*0.55,H*1.0,W*0.52,H*0.5,'rgba(120,70,255,0.42)','rgba(120,70,255,0)');
+  blob(ctx,W*0.92,H*0.8,W*0.35,H*0.42,'rgba(255,170,60,0.34)','rgba(255,170,60,0)');
+  ctx.globalCompositeOperation='source-over';
+}
+function sceneCalm(ctx,W,H){
+  const g=ctx.createRadialGradient(W*0.5,-H*0.1,0,W*0.5,-H*0.1,H*1.1);
+  g.addColorStop(0,'#221a3a'); g.addColorStop(0.6,'#0d0a17'); g.addColorStop(1,'#07060d');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+function vignette(ctx,W,H,amt){ const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,Math.max(W,H)*0.75);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,`rgba(4,2,10,${amt})`); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
+function bottomScrim(ctx,W,H,h){ const g=ctx.createLinearGradient(0,H-h,0,H);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.55)'); ctx.fillStyle=g; ctx.fillRect(0,H-h,W,h); }
+
+function iconMark(ctx,x,y,s){ // brand icon at (x,y), size s
+  fillRR(ctx,x,y,s,s,s*0.21,NAVY1);
+  fillRR(ctx,x+s*0.31,y+s*0.35,s*0.38,s*0.125,s*0.06,ORANGE);
+  fillRR(ctx,x+s*0.21,y+s*0.56,s*0.58,s*0.125,s*0.06,ORANGE);
+}
+function brand(ctx,x,y){ const s=44; iconMark(ctx,x,y,s);
+  ctx.textBaseline='middle'; ctx.font=`700 21px ${SANS}`;
+  ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.fillText('Better Subs ',x+s+14,y+s/2);
+  const w=ctx.measureText('Better Subs ').width;
+  ctx.fillStyle='#9aa0b5'; ctx.font=`600 21px ${SANS}`; ctx.fillText('for Crunchyroll',x+s+14+w,y+s/2); }
+
+function text(ctx,t,x,y,px,color,{align='left',weight='700',family=SANS,shadow=0}={}){
+  ctx.font=`${weight} ${px}px ${family}`; ctx.fillStyle=color; ctx.textAlign=align; ctx.textBaseline='alphabetic';
+  if(shadow){ ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=shadow; ctx.fillText(t,x,y); ctx.restore(); }
+  ctx.fillText(t,x,y); }
+function outlined(ctx,t,x,y,px,{fill='#fff',outline='#000',bord=2.5,align='center',weight='600',family=SUBFONT}={}){
+  ctx.font=`${weight} ${px}px ${family}`; ctx.textAlign=align; ctx.textBaseline='alphabetic'; ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=px*0.05+2; ctx.shadowOffsetY=1;
+  if(bord>0){ ctx.strokeStyle=outline; ctx.lineWidth=bord*2; ctx.strokeText(t,x,y); }
+  ctx.shadowColor='transparent'; ctx.fillStyle=fill; ctx.fillText(t,x,y); ctx.restore(); }
+
+function playerBtn(ctx,x,y,label){ // orange pill + CC icon + 1x, right-anchored ending at x
+  ctx.font=`800 16px ${SANS}`; const tw=ctx.measureText(label).width; const pillW=tw+24, pillH=30;
+  let cx=x;
+  ctx.font=`700 17px ${SANS}`; ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.textAlign='right'; ctx.textBaseline='middle';
+  ctx.fillText('1x',cx,y+pillH/2); cx-=ctx.measureText('1x').width+18;
+  // CC icon
+  const cw=38,ch=30; strokeRR(ctx,cx-cw,y,cw,ch,7,'rgba(255,255,255,0.92)',2.5);
+  ctx.fillStyle='#fff'; fillRR(ctx,cx-cw+7,y+12,9,3,1.5,'#fff'); fillRR(ctx,cx-cw+20,y+12,12,3,1.5,'#fff');
+  cx-=cw+16;
+  // pill
+  fillRR(ctx,cx-pillW,y,pillW,pillH,5,ORANGE);
+  ctx.font=`800 16px ${SANS}`; ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText(label,cx-pillW/2,y+pillH/2+1);
+}
+
+// ── image draws ─────────────────────────────────────────────────────────────
+function drawHero(ctx,W,H){
+  sceneDusk(ctx,W,H); vignette(ctx,W,H,0.7); bottomScrim(ctx,W,H,320);
+  brand(ctx,48,40);
+  // headline with accent — draw centered as two parts
+  ctx.font=`800 62px ${SANS}`; const p1='Any subtitles. ', p2='Any dub.';
+  const w1=ctx.measureText(p1).width, w2=ctx.measureText(p2).width; const startX=(W-(w1+w2))/2;
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=26;
+  ctx.fillStyle='#fff'; ctx.fillText(p1,startX,212);
+  ctx.fillStyle=ORANGE; ctx.fillText(p2,startX+w1,212); ctx.restore();
+  text(ctx,'Mix and match the subtitle language with whatever audio you’re watching.',W/2,262,23,'rgba(255,255,255,0.8)',{align:'center',weight:'500',shadow:14});
+  // chip
+  ctx.font=`700 17px ${SANS}`;
+  const chipTxt=['Audio  ','日本語','    →    ','Subtitles  ','English'];
+  const parts=[['Audio  ','#9aa0b5'],['日本語','#fff'],['   →   ',ORANGE],['Subtitles  ','#9aa0b5'],['English','#fff']];
+  let tot=0; parts.forEach(p=>tot+=ctx.measureText(p[0]).width);
+  const chipPadX=20, chipH=44, chipW=tot+chipPadX*2, chipX=(W-chipW)/2, chipY=H-232;
+  fillRR(ctx,chipX,chipY,chipW,chipH,22,'rgba(15,15,30,0.72)'); strokeRR(ctx,chipX,chipY,chipW,chipH,22,'rgba(255,255,255,0.14)',1);
+  let tx=chipX+chipPadX; ctx.textAlign='left'; ctx.textBaseline='middle';
+  parts.forEach(p=>{ ctx.fillStyle=p[1]; ctx.font=`700 17px ${SANS}`; ctx.fillText(p[0],tx,chipY+chipH/2+1); tx+=ctx.measureText(p[0]).width; });
+  // demo subtitle
+  outlined(ctx,'I never expected to find you here.',W/2,H-132,40,{bord:2.5});
+  playerBtn(ctx,W-44,H-58,'EN ✓');
+}
+
+function drawPicker(ctx,W,H){
+  sceneDusk(ctx,W,H); vignette(ctx,W,H,0.75); bottomScrim(ctx,W,H,300);
+  brand(ctx,48,40);
+  ctx.font=`800 50px ${SANS}`; const p1='Pick any language, ', p2='on the player.';
+  const w1=ctx.measureText(p1).width,w2=ctx.measureText(p2).width,sx=(W-(w1+w2))/2;
+  ctx.textAlign='left'; ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=22;
+  ctx.fillStyle='#fff'; ctx.fillText(p1,sx,150); ctx.fillStyle=ORANGE; ctx.fillText(p2,sx+w1,150); ctx.restore();
+  text(ctx,'Every available subtitle source — with live validity badges.',W/2,196,21,'rgba(255,255,255,0.78)',{align:'center',weight:'500',shadow:14});
+  // menu
+  const mw=360, mx=(W-mw)/2, my=250; const rows=[
+    ['Japanese','✓ valid','#4caf50',false],['English','active','#ff6b35',true],['Deutsch','✓ valid','#4caf50',false],
+    ['Español (Lat)','✓ valid','#4caf50',false],['Français','⚠ wrong title','#cc9900',false],
+    ['Italiano','no subs','#666',false,true],['Português (BR)','✓ valid','#4caf50',false]];
+  const rowH=44, headH=42, mh=headH+rows.length*rowH+22;
+  fillRR(ctx,mx,my,mw,mh,9,'#1a1a2e'); strokeRR(ctx,mx,my,mw,mh,9,'rgba(255,107,53,0.4)',1);
+  text(ctx,'SUBTITLE SOURCE',mx+22,my+27,15,'#888',{weight:'600'});
+  ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.fillRect(mx+12,my+headH-2,mw-24,1);
+  let ry=my+headH;
+  rows.forEach(r=>{
+    if(r[3]){ fillRR(ctx,mx+0,ry,mw,rowH,0,'rgba(255,107,53,0.12)'); }
+    ctx.textBaseline='middle';
+    if(r[3]){ ctx.fillStyle=ORANGE; ctx.font=`700 16px ${SANS}`; ctx.textAlign='center'; ctx.fillText('✓',mx+24,ry+rowH/2); }
+    ctx.textAlign='left'; ctx.font=`${r[3]?'700':'400'} 19px ${SANS}`; ctx.fillStyle=r[4]?'#6a6a78':(r[3]?ORANGE:'#e0e0e0');
+    ctx.fillText(r[0],mx+44,ry+rowH/2);
+    ctx.textAlign='right'; ctx.font=`600 14px ${SANS}`; ctx.fillStyle=r[2]; ctx.fillText(r[1],mx+mw-22,ry+rowH/2);
+    ry+=rowH;
+  });
+  // caret button + EN pill bottom-right
+  ctx.font=`800 16px ${SANS}`; const lab='EN ✓'; const tw=ctx.measureText(lab).width;
+  fillRR(ctx,W-44-30-14-(tw+24),H-58,tw+24,30,5,ORANGE);
+  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(lab,W-44-30-14-(tw+24)/2,H-58+16);
+  strokeRR(ctx,W-44-30,H-58,30,30,4,ORANGE,1.5); ctx.fillStyle=ORANGE; ctx.font=`700 16px ${SANS}`; ctx.fillText('▾',W-44-15,H-58+16);
+}
+
+function drawStudio(ctx,W,H){
+  sceneCalm(ctx,W,H); brand(ctx,48,40);
+  // copy left
+  ctx.textAlign='left';
+  text(ctx,'Make them',80,272,54,'#fff',{weight:'800'});
+  ctx.font=`800 54px ${SANS}`; const mw=ctx.measureText('Make them ').width;
+  text(ctx,'yours.',80,332,54,ORANGE,{weight:'800'});
+  text(ctx,'Font, colour, outline, shadow, and a',80,392,22,'rgba(255,255,255,0.74)',{weight:'500'});
+  text(ctx,'glass background — with a live preview.',80,422,22,'rgba(255,255,255,0.74)',{weight:'500'});
+  const bullets=['Size 25–250% & precise sync offset','Custom outline, shadow & opacity','One-tap presets, or fine-tune it all'];
+  bullets.forEach((b,i)=>{ const y=480+i*38; text(ctx,'◆',80,y,18,ORANGE,{weight:'700'}); text(ctx,b,104,y,19,'#d6d8e6',{weight:'500'}); });
+  // popup panel right
+  const pw=430, px=W-90-pw, py=96; const ph=520;
+  fillRR(ctx,px,py,pw,ph,16,'#1a1a2e'); strokeRR(ctx,px,py,pw,ph,16,'rgba(255,255,255,0.06)',1);
+  text(ctx,'Subtitle appearance',px+22,py+38,19,ORANGE,{weight:'700'});
+  // preview box
+  const bx=px+22,by=py+54,bw=pw-44,bh=150;
+  ctx.save(); rr(ctx,bx,by,bw,bh,10); ctx.clip();
+  const g=ctx.createLinearGradient(bx,by,bx,by+bh); g.addColorStop(0,'#1c0930'); g.addColorStop(1,'#060309'); ctx.fillStyle=g; ctx.fillRect(bx,by,bw,bh);
+  ctx.globalCompositeOperation='lighter';
+  blob(ctx,bx+bw*0.25,by+bh*0.3,bw*0.4,bh*0.5,'rgba(255,213,74,0.5)','rgba(255,213,74,0)');
+  blob(ctx,bx+bw*0.75,by+bh*0.6,bw*0.4,bh*0.5,'rgba(255,61,110,0.5)','rgba(255,61,110,0)');
+  blob(ctx,bx+bw*0.5,by+bh,bw*0.45,bh*0.5,'rgba(107,59,255,0.5)','rgba(107,59,255,0)');
+  ctx.globalCompositeOperation='source-over'; ctx.restore();
+  outlined(ctx,'Subtitle preview',bx+bw/2,by+bh/2+8,24,{bord:3});
+  // controls
+  function rowc(y,lab,right){ fillRR(ctx,px+22,y,pw-44,46,10,'#16213e'); text(ctx,lab,px+38,y+29,16,'#e0e0e0',{weight:'500'});
+    if(right){ ctx.fillStyle=ORANGE; ctx.font=`600 14px ${SANS}`; ctx.textAlign='right'; ctx.fillText(right,px+pw-38,y+29); ctx.textAlign='left'; } }
+  let cy=by+bh+14;
+  rowc(cy,'Override subtitle style'); // toggle
+  fillRR(ctx,px+pw-38-42,cy+11,42,23,12,ORANGE); ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(px+pw-38-12,cy+22,8,0,7); ctx.fill();
+  cy+=54; rowc(cy,'Text','100%'); fillRR(ctx,px+pw-152,cy+12,30,24,5,'#fff'); strokeRR(ctx,px+pw-152,cy+12,30,24,5,'#555',2);
+  cy+=54; rowc(cy,'Outline','3.0'); fillRR(ctx,px+pw-152,cy+12,30,24,5,'#000'); strokeRR(ctx,px+pw-152,cy+12,30,24,5,'#555',2);
+  // presets
+  cy+=58; const labels=['CR Default','Outlined','Sticker','Glass']; const cw=(pw-44-3*8)/4;
+  labels.forEach((l,i)=>{ const x=px+22+i*(cw+8); const on=i===1;
+    fillRR(ctx,x,cy,cw,34,7,on?'rgba(255,107,53,0.12)':'#0f0f1e'); strokeRR(ctx,x,cy,cw,34,7,on?ORANGE:'#333',1);
+    ctx.fillStyle=on?ORANGE:'#aaa'; ctx.font=`600 14px ${SANS}`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(l,x+cw/2,cy+18); });
+}
+
+function drawGlass(ctx,W,H){
+  sceneCool(ctx,W,H); vignette(ctx,W,H,0.55); brand(ctx,48,40);
+  ctx.font=`800 56px ${SANS}`; const p1='Captions that feel ',p2='built-in.';
+  const w1=ctx.measureText(p1).width,w2=ctx.measureText(p2).width,sx=(W-(w1+w2))/2;
+  ctx.textAlign='left'; ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=24;
+  ctx.fillStyle='#fff'; ctx.fillText(p1,sx,158); ctx.fillStyle=ORANGE; ctx.fillText(p2,sx+w1,158); ctx.restore();
+  text(ctx,'A frosted-glass panel — adjustable blur, tint, padding, and radius.',W/2,206,22,'rgba(255,255,255,0.82)',{align:'center',weight:'500',shadow:14});
+  // glass box
+  const t='Some things you can only say once.';
+  ctx.font=`600 38px ${SUBFONT}`; const tw=ctx.measureText(t).width;
+  const bw=tw+68, bh=80, bx=(W-bw)/2, by=H-150-bh, r=18;
+  ctx.save(); rr(ctx,bx,by,bw,bh,r); ctx.clip(); ctx.filter='blur(14px)';
+  sceneCool(ctx,W,H); // blurred backdrop within clip
+  ctx.filter='none'; ctx.fillStyle='rgba(10,12,26,0.30)'; ctx.fillRect(bx,by,bw,bh); ctx.restore();
+  strokeRR(ctx,bx,by,bw,bh,r,'rgba(255,255,255,0.30)',1.4);
+  ctx.save(); rr(ctx,bx,by,bw,bh,r); ctx.clip();
+  ctx.fillStyle='rgba(255,255,255,0.16)'; ctx.fillRect(bx,by,bw,2);
+  ctx.fillStyle='rgba(0,0,0,0.16)'; ctx.fillRect(bx,by+bh-2,bw,2); ctx.restore();
+  ctx.font=`600 38px ${SUBFONT}`; ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=4; ctx.fillText(t,W/2,by+bh/2+1); ctx.restore();
+}
+
+function drawDecouple(ctx,W,H){
+  sceneCalm(ctx,W,H); brand(ctx,48,40);
+  ctx.font=`800 56px ${SANS}`; const p1='Audio and subtitles, ',p2='decoupled.';
+  const w1=ctx.measureText(p1).width,w2=ctx.measureText(p2).width,sx=(W-(w1+w2))/2;
+  ctx.textAlign='left'; ctx.fillStyle='#fff'; ctx.fillText(p1,sx,158); ctx.fillStyle=ORANGE; ctx.fillText(p2,sx+w1,158);
+  text(ctx,'Crunchyroll ties them together. This sets them free.',W/2,206,22,'rgba(255,255,255,0.74)',{align:'center',weight:'500'});
+  // cards
+  const cw=360,ch=220,gap=46,cy=300; const totalW=cw*2+gap+78; const startX=(W-totalW)/2;
+  function card(x,kicker,val,valColor,icon){ fillRR(ctx,x,cy,cw,ch,20,'#16182c'); strokeRR(ctx,x,cy,cw,ch,20,'rgba(255,255,255,0.08)',1);
+    text(ctx,icon,x+34,cy+62,30,'#fff',{weight:'400'});
+    text(ctx,kicker,x+34,cy+108,16,'#8a90a8',{weight:'700'});
+    text(ctx,val,x+34,cy+170,46,valColor,{weight:'800'}); }
+  card(startX,'AUDIO DUB','Deutsch','#7fb2ff','🎧');
+  card(startX+cw+gap+78,'SUBTITLES','English',ORANGE,'💬');
+  // swap circle
+  const scx=startX+cw+gap/2+39, scy=cy+ch/2;
+  ctx.beginPath(); ctx.arc(scx,scy,39,0,7); ctx.fillStyle='#1a1a2e'; ctx.fill(); ctx.lineWidth=1; ctx.strokeStyle='rgba(255,107,53,0.5)'; ctx.stroke();
+  text(ctx,'⇄',scx,scy+13,36,ORANGE,{align:'center',weight:'400'});
+  // combos
+  const combos=[['English dub','Français subs'],['日本語','English subs'],['Deutsch','Español subs']];
+  ctx.font=`600 17px ${SANS}`; const chipH=42, gapc=14;
+  const widths=combos.map(c=>ctx.measureText(`${c[0]}  +  ${c[1]}`).width+40);
+  let tw=widths.reduce((a,b)=>a+b,0)+gapc*2; let x=(W-tw)/2; const yy=H-96;
+  combos.forEach((c,i)=>{ const w=widths[i]; fillRR(ctx,x,yy,w,chipH,21,'rgba(255,255,255,0.05)'); strokeRR(ctx,x,yy,w,chipH,21,'rgba(255,255,255,0.12)',1);
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    let cxp=x+20; ctx.font=`700 17px ${SANS}`; ctx.fillStyle='#fff'; ctx.fillText(c[0],cxp,yy+chipH/2); cxp+=ctx.measureText(c[0]).width;
+    ctx.fillStyle=ORANGE; ctx.fillText('  +  ',cxp,yy+chipH/2); cxp+=ctx.measureText('  +  ').width;
+    ctx.fillStyle='#fff'; ctx.fillText(c[1],cxp,yy+chipH/2);
+    x+=w+gapc; });
+}
+
+function drawSmallPromo(ctx,W,H){ // 440x280
+  sceneDusk(ctx,W,H); vignette(ctx,W,H,0.6);
+  iconMark(ctx,W/2-34,52,68);
+  text(ctx,'Better Subs',W/2,168,30,'#fff',{align:'center',weight:'800'});
+  text(ctx,'for Crunchyroll',W/2,196,18,'#9aa0b5',{align:'center',weight:'600'});
+  ctx.font=`700 17px ${SANS}`; const a='Any subtitles.  ',b='Any dub.';
+  const wa=ctx.measureText(a).width,wb=ctx.measureText(b).width,sx=(W-(wa+wb))/2;
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.fillText(a,sx,238);
+  ctx.fillStyle=ORANGE; ctx.fillText(b,sx+wa,238);
+}
+
+function drawMarquee(ctx,W,H){ // 1400x560 — centered banner
+  sceneDusk(ctx,W,H); vignette(ctx,W,H,0.65); bottomScrim(ctx,W,H,180);
+  brand(ctx,60,46);
+  ctx.font=`800 72px ${SANS}`; const p1='Any subtitles. ',p2='Any dub.';
+  const w1=ctx.measureText(p1).width,w2=ctx.measureText(p2).width,sx=(W-(w1+w2))/2;
+  ctx.textAlign='left'; ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=24;
+  ctx.fillStyle='#fff'; ctx.fillText(p1,sx,262); ctx.fillStyle=ORANGE; ctx.fillText(p2,sx+w1,262); ctx.restore();
+  text(ctx,'Mix and match the subtitle language with whatever audio you’re watching.',W/2,320,26,'rgba(255,255,255,0.8)',{align:'center',weight:'500',shadow:14});
+  outlined(ctx,'I never expected to find you here.',W/2,472,40,{align:'center',bord:2.5});
+  playerBtn(ctx,W-60,70,'EN ✓');
+}
+
+// ── 24-bit (no-alpha) PNG export via CompressionStream ──────────────────────
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
+function crc32(buf){let c=0xFFFFFFFF;for(let i=0;i<buf.length;i++)c=CRC[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function u32(n){const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,n);return b;}
+function chunk(type,data){const tb=new TextEncoder().encode(type);const body=new Uint8Array(tb.length+data.length);body.set(tb);body.set(data,tb.length);
+  const out=new Uint8Array(4+body.length+4);out.set(u32(data.length),0);out.set(body,4);out.set(u32(crc32(body)),4+body.length);return out;}
+async function canvasToPng24(canvas){
+  const W=canvas.width,Hh=canvas.height,d=canvas.getContext('2d').getImageData(0,0,W,Hh).data;
+  const stride=W*3, raw=new Uint8Array((stride+1)*Hh);
+  for(let y=0;y<Hh;y++){raw[y*(stride+1)]=0;for(let x=0;x<W;x++){const s=(y*W+x)*4,o=y*(stride+1)+1+x*3;raw[o]=d[s];raw[o+1]=d[s+1];raw[o+2]=d[s+2];}}
+  const cs=new CompressionStream('deflate');const w=cs.writable.getWriter();w.write(raw);w.close();
+  const comp=new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  const ihdr=new Uint8Array(13);const dv=new DataView(ihdr.buffer);dv.setUint32(0,W);dv.setUint32(4,Hh);ihdr[8]=8;ihdr[9]=2;
+  const sig=new Uint8Array([137,80,78,71,13,10,26,10]);
+  const parts=[sig,chunk('IHDR',ihdr),chunk('IDAT',comp),chunk('IEND',new Uint8Array(0))];
+  return new Blob(parts,{type:'image/png'});
+}
+
+// ── build UI ────────────────────────────────────────────────────────────────
+const IMAGES=[
+  {name:'1-hero',w:1280,h:800,draw:drawHero},
+  {name:'2-source-picker',w:1280,h:800,draw:drawPicker},
+  {name:'3-style-studio',w:1280,h:800,draw:drawStudio},
+  {name:'4-glass',w:1280,h:800,draw:drawGlass},
+  {name:'5-decouple',w:1280,h:800,draw:drawDecouple},
+  {name:'promo-small-440x280',w:440,h:280,draw:drawSmallPromo},
+  {name:'promo-marquee-1400x560',w:1400,h:560,draw:drawMarquee},
+];
+const out=document.getElementById('out'); const canvases=[];
+async function dl(canvas,name){ const blob=await canvasToPng24(canvas); const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=name+'.png'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }
+for(const def of IMAGES){
+  const c=document.createElement('canvas'); c.width=def.w; c.height=def.h;
+  const ctx=c.getContext('2d'); def.draw(ctx,def.w,def.h);
+  const wrap=document.createElement('div'); wrap.className='item';
+  const lbl=document.createElement('div'); lbl.className='lbl';
+  lbl.innerHTML=`<b>${def.name}.png</b> — ${def.w}×${def.h}, 24-bit, no alpha`;
+  const btn=document.createElement('button'); btn.textContent='⬇ Download'; btn.onclick=()=>dl(c,def.name);
+  lbl.appendChild(btn); wrap.appendChild(lbl); wrap.appendChild(c); out.appendChild(wrap);
+  canvases.push([c,def.name]);
+}
+document.getElementById('all').onclick=async()=>{ for(const [c,n] of canvases){ await dl(c,n); await new Promise(r=>setTimeout(r,350)); } };
+</script>
+</body>
+</html>

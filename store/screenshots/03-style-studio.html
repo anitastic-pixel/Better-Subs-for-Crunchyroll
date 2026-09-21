@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Better Subs — Style studio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0a0a12; }
+  .frame { position: relative; width: 1280px; height: 800px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: radial-gradient(ellipse 90% 70% at 50% -10%, #20203a 0%, #0c0a16 60%, #07060d 100%); }
+  .brand { position: absolute; top: 40px; left: 48px; display: flex; align-items: center; gap: 14px; z-index: 4; }
+  .brand .name { color: #fff; font-size: 20px; font-weight: 700; }
+  .brand .name span { color: #9aa0b5; font-weight: 600; }
+
+  .copy { position: absolute; left: 80px; top: 230px; width: 480px; z-index: 3; }
+  .copy h1 { color: #fff; font-size: 54px; line-height: 1.06; font-weight: 800; letter-spacing: -0.5px; }
+  .copy h1 .accent { color: #ff6b35; }
+  .copy p { margin-top: 18px; color: rgba(255,255,255,0.74); font-size: 22px; font-weight: 500; line-height: 1.5; }
+  .copy ul { margin-top: 26px; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .copy li { color: #d6d8e6; font-size: 19px; display: flex; align-items: center; gap: 12px; }
+  .copy li b { color: #ff6b35; font-size: 20px; }
+
+  /* popup panel — enlarged, faithful to the real popup */
+  .popup { position: absolute; right: 90px; top: 96px; width: 430px; background: #1a1a2e; color: #e0e0e0;
+    border-radius: 16px; padding: 22px; box-shadow: 0 30px 80px rgba(0,0,0,0.6); z-index: 3;
+    border: 1px solid rgba(255,255,255,0.06); }
+  .popup h2 { font-size: 19px; font-weight: 700; color: #ff6b35; margin-bottom: 14px; }
+  .preview { height: 150px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    overflow: hidden; position: relative; margin-bottom: 14px;
+    background:
+      radial-gradient(ellipse 55% 60% at 22% 28%, rgba(255,213,74,0.46), transparent 70%),
+      radial-gradient(ellipse 48% 52% at 76% 60%, rgba(255,61,110,0.50), transparent 70%),
+      radial-gradient(ellipse 60% 60% at 52% 96%, rgba(107,59,255,0.46), transparent 70%),
+      linear-gradient(165deg, #1c0930 0%, #060309 100%);
+    box-shadow: inset 0 0 55px 8px rgba(8,2,18,0.7); }
+  .preview .sub { z-index: 2; }
+  .rowc { display: flex; align-items: center; justify-content: space-between; background: #16213e;
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; font-size: 16px; }
+  .rowc .lab { font-weight: 500; }
+  .sw { display: inline-flex; gap: 8px; align-items: center; }
+  .swatch { width: 26px; height: 22px; border-radius: 5px; border: 2px solid #444; }
+  .toggle { width: 42px; height: 23px; border-radius: 20px; background: #ff6b35; position: relative; flex-shrink: 0; }
+  .toggle::after { content: ''; position: absolute; width: 17px; height: 17px; border-radius: 50%; background: #fff; top: 3px; right: 3px; }
+  .slider { height: 5px; border-radius: 4px; background: #333; flex: 1; margin: 0 10px; position: relative; }
+  .slider::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #ff6b35; top: -6px; }
+  .s1::after { left: 64%; } .s2::after { left: 40%; }
+  .val { color: #ff6b35; font-weight: 600; font-size: 14px; min-width: 40px; text-align: right; }
+  .presets { display: flex; gap: 8px; margin-top: 4px; }
+  .chip2 { flex: 1; text-align: center; font-size: 14px; font-weight: 600; padding: 8px 0; border-radius: 7px;
+    background: #0f0f1e; color: #aaa; border: 1px solid #333; }
+  .chip2.on { color: #ff6b35; border-color: #ff6b35; background: rgba(255,107,53,0.12); }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 48 48"><rect width="48" height="48" rx="10" fill="#1a1a2e"/>
+        <rect x="15" y="17" width="18" height="6" rx="3" fill="#ff6b35"/><rect x="10" y="27" width="28" height="6" rx="3" fill="#ff6b35"/></svg>
+      <div class="name">Better Subs <span>for Crunchyroll</span></div>
+    </div>
+
+    <div class="copy">
+      <h1>Make them <span class="accent">yours.</span></h1>
+      <p>Font, colour, outline, shadow, and a glass background — tuned with a live preview.</p>
+      <ul>
+        <li><b>◆</b> Size 25–250% &amp; precise sync offset</li>
+        <li><b>◆</b> Custom outline, shadow &amp; opacity</li>
+        <li><b>◆</b> One-tap presets, or fine-tune everything</li>
+      </ul>
+    </div>
+
+    <div class="popup">
+      <h2>Subtitle appearance</h2>
+      <div class="preview"><span class="sub" id="sub"></span></div>
+      <div class="rowc"><span class="lab">Override subtitle style</span><span class="toggle"></span></div>
+      <div class="rowc"><span class="lab">Text</span><span class="sw"><span class="swatch" style="background:#ffffff"></span><span class="slider s1"></span><span class="val">100%</span></span></div>
+      <div class="rowc"><span class="lab">Outline</span><span class="sw"><span class="swatch" style="background:#000"></span><span class="slider s2"></span><span class="val">3.0</span></span></div>
+      <div class="presets">
+        <span class="chip2">CR Default</span>
+        <span class="chip2 on">Outlined</span>
+        <span class="chip2">Sticker</span>
+        <span class="chip2">Glass</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="_lib.js"></script>
+  <script>
+    document.getElementById('sub').appendChild(window.DEMO.createOutlinedTextSvg("Subtitle preview", {
+      fillColor: 'rgb(255,255,255)', outlineColor: 'rgb(0,0,0)', bord: 3,
+      fontFamily: "'Trebuchet MS','Segoe UI',sans-serif", fontSize: '24px', weight: '600', shad: 1, shadOpacity: 0.7,
+    }));
+  </script>
+</body>
+</html>

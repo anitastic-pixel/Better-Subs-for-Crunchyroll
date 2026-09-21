@@ -1,6 +1,6 @@
 # Better Subs for Crunchyroll
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Manifest V3](https://img.shields.io/badge/manifest-v3-4caf50.svg) ![Data: opt-in reports only](https://img.shields.io/badge/data-opt--in%20reports%20only-ff6b35.svg) ![Chrome 88+](https://img.shields.io/badge/chrome-88%2B-4285F4.svg)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Manifest V3](https://img.shields.io/badge/manifest-v3-4caf50.svg) ![Data: opt-in reports only](https://img.shields.io/badge/data-opt--in%20reports%20only-ff6b35.svg) ![Chrome 111+](https://img.shields.io/badge/chrome-111%2B-4285F4.svg)
 
 A Chrome extension that lets you mix and match subtitle languages independently from the audio track on Crunchyroll. Watch the English dub with the accurate original subtitles, the Japanese dub with French subtitles, or any other combination — the audio and subtitle tracks are fully decoupled. You can also **bring your own subtitles**: upload a fansub file or machine-translate an existing track, and the extension renders it over the player like any built-in source.
 
@@ -167,9 +167,10 @@ Positioned typeset signs are rendered with a bundled build of [libass](https://g
 | Permission | Reason |
 |---|---|
 | `storage` | Persists user settings and subtitle cache across sessions |
+| `activeTab` | Lets the popup see the current tab's address when you open it, so it can offer "Reload tab" on a Crunchyroll tab opened before the extension loaded. No install warning |
 | `https://api.deepl.com/*`, `https://api-free.deepl.com/*` *(optional)* | Only requested if you enable machine translation, so the extension can call DeepL with your own key. Not part of the default install prompt |
 
-No host permissions are requested at install time. No remote code. No data is collected automatically — the only data that ever leaves your device is the text you choose to machine-translate (sent to DeepL with your own key, only when you enable that feature) and a problem report you choose to send (see [Privacy](#privacy)).
+No host permissions are requested at install time, though Chrome's install prompt still lists Crunchyroll because the content scripts run there. No remote code. No data is collected automatically — the only data that ever leaves your device is the text you choose to machine-translate (sent to DeepL with your own key, only when you enable that feature) and a problem report or survey you choose to send (see [Privacy](#privacy)).
 
 ---
 
@@ -179,7 +180,7 @@ No host permissions are requested at install time. No remote code. No data is co
 
 If you enable **machine translation**, the subtitle text you translate is sent directly to DeepL using the API key you provide — the key is stored on your device and is never sent anywhere else, and the resulting translation is cached locally per episode.
 
-The one exception is a **problem report you choose to send** (the on-error prompt, or the popup's **Send a report**): it sends a small, anonymized diagnostic bundle — extension version, a **coarse platform string** (OS family + Chrome version, never your full user-agent), the **episode id** you're on (a public id; the title slug is dropped), recent in-extension activity, and your settings, plus an optional note — to the developer to help fix the bug. **URLs, signed tokens, emails, and long ids are redacted** before anything leaves your device, and there's no account, profile, or identifier attached. You can turn the diagnostics off in the popup (**Include diagnostics**) to send only the version, platform, and your note. Nothing is sold, shared with advertisers, or used for any unrelated purpose.
+The one exception is a **problem report you choose to send** (the on-error prompt, or the popup's **Send a report**): it sends a small, anonymized diagnostic bundle — extension version, a **coarse platform string** (OS family + Chrome version, never your full user-agent), the **episode id** you're on (a public id; the title slug is dropped), recent in-extension activity, and your settings, plus an optional note — to the developer to help fix the bug. **URL query strings (where signed tokens live), emails, and long hex ids are removed** before anything leaves your device, and there's no account, profile, or identifier attached. You can turn the diagnostics off in the popup (**Include diagnostics**) to send only the version, platform, and your note. Nothing is sold, shared with advertisers, or used for any unrelated purpose.
 
 See the full [Privacy Policy](PRIVACY.md).
 
@@ -199,5 +200,5 @@ There is currently no fix for episodes where every available session carries the
 
 ## Compatibility
 
-- Chrome 88+
+- Chrome 111+
 - Crunchyroll (`www.crunchyroll.com`)

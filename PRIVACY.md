@@ -1,10 +1,11 @@
 # Privacy Policy — Better Subs for Crunchyroll
 
-_Last updated: 2026-06-09_
+_Last updated: 2026-09-21_
 
 **Better Subs for Crunchyroll does not collect, transmit, or sell your data
 automatically.** There are no analytics, no tracking, and no accounts. The one
-exception is a **problem report you explicitly choose to send** (see below).
+exception is a **problem report or survey you explicitly choose to send** (see
+below).
 
 ## What the extension stores
 
@@ -39,14 +40,16 @@ small diagnostic bundle is sent to the developer to help fix the bug:
   major version — e.g. "Windows · Chrome 148"). The full user-agent is
   **never** sent, at any level;
 - the **episode id** of the page you're on (a public identifier — the title
-  slug is dropped) and recent in-extension activity (subtitle-loading events),
-  with URLs, signed tokens, emails, and long ids redacted before it leaves your
-  device;
+  slug is dropped) and recent in-extension activity (subtitle-loading events,
+  including the paths of subtitle files loaded from Crunchyroll's CDN). Before
+  it leaves your device, URL query strings (where signed access tokens live),
+  email addresses, and long hexadecimal ids are removed;
 - your extension settings, and an optional note you type.
 
-You can turn the diagnostic details off in the popup (**Include diagnostics**),
-which sends only the version and your note. **Signed access tokens are stripped
-before anything is sent.** Reports are delivered to a private developer channel,
+You can turn the diagnostic details off in the popup (**Include diagnostics**).
+A report from the popup then sends only the version, the platform string, and
+your note; the on-error prompt sends only the version and the error message.
+**Signed access tokens are stripped before anything is sent.** Reports are delivered to a private developer channel,
 used solely to diagnose and fix bugs, and are never sold, shared with
 advertisers, or used for any unrelated purpose.
 
@@ -55,7 +58,7 @@ advertisers, or used for any unrelated purpose.
 The popup's **Quick survey** (under Help & feedback) works the same way: it
 sends nothing until you press **Send survey**, and the payload is only your
 answers — which features you use (checkboxes), an optional note, an optional
-1–5 rating — plus, if you leave **Include settings snapshot** ticked, a list
+1–5 rating — the extension version and the coarse platform string, plus, if you leave **Include settings snapshot** ticked, a list
 of on/off feature flags (e.g. `mtEnabled=true`). No episode, page, history, or
 identifying information is ever part of a survey. It goes to the same private
 developer channel as problem reports and is used only to prioritize what to
@@ -87,8 +90,13 @@ The only other network destinations are:
 ## Permissions
 
 - **`storage`** — to save your settings, the subtitle cache, your custom
-  sources, and (if set) your translation API key. This is the only permission
-  requested at install time.
+  sources, and (if set) your translation API key.
+- **`activeTab`** — lets the popup see the address of the tab you opened it
+  on, only at the moment you open it, so it can tell a Crunchyroll tab that
+  needs reloading apart from a non-Crunchyroll tab. Nothing about the tab is
+  stored or sent.
+
+`storage` and `activeTab` are the only permissions requested at install time.
 - **Optional host access to `api-free.deepl.com` and `api.deepl.com`** —
   requested only when you enable machine translation, so the background worker
   can reach DeepL. If you never use that feature, it is never requested, and you

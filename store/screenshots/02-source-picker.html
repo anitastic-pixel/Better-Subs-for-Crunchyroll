@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Better Subs — Source picker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0a0a12; }
+  .frame { position: relative; width: 1280px; height: 800px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background:
+      radial-gradient(ellipse 55% 60% at 20% 26%, rgba(255,213,74,0.38), transparent 70%),
+      radial-gradient(ellipse 48% 52% at 80% 60%, rgba(255,61,110,0.42), transparent 70%),
+      radial-gradient(ellipse 60% 60% at 50% 100%, rgba(107,59,255,0.40), transparent 70%),
+      radial-gradient(ellipse 55% 58% at 8% 90%, rgba(255,122,31,0.34), transparent 70%),
+      linear-gradient(165deg, #1c0930 0%, #060309 100%); }
+  .frame::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+    box-shadow: inset 0 0 220px 40px rgba(6,2,14,0.72); opacity: .9; }
+  .scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 300px;
+    background: linear-gradient(to top, rgba(0,0,0,0.55), transparent); }
+  .brand { position: absolute; top: 40px; left: 48px; display: flex; align-items: center; gap: 14px; z-index: 4; }
+  .brand .name { color: #fff; font-size: 20px; font-weight: 700; }
+  .brand .name span { color: #9aa0b5; font-weight: 600; }
+  .headline { position: absolute; top: 120px; left: 0; right: 0; text-align: center; z-index: 4; padding: 0 60px; }
+  .headline h1 { color: #fff; font-size: 52px; line-height: 1.08; font-weight: 800; letter-spacing: -0.5px;
+    text-shadow: 0 2px 26px rgba(0,0,0,0.5); }
+  .headline h1 .accent { color: #ff6b35; }
+  .headline p { margin-top: 14px; color: rgba(255,255,255,0.78); font-size: 21px; font-weight: 500;
+    text-shadow: 0 2px 14px rgba(0,0,0,0.5); }
+
+  /* source-picker dropdown (mirrors lib/source-menu.js) */
+  .menu { position: absolute; left: 50%; top: 320px; transform: translateX(-50%); z-index: 5;
+    background: #1a1a2e; border: 1px solid rgba(255,107,53,0.4); border-radius: 8px;
+    box-shadow: 0 18px 60px rgba(0,0,0,0.6); width: 340px; padding: 8px 0; }
+  .menu .hd { padding: 12px 22px 8px; font-size: 16px; color: #888; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase; }
+  .menu .div { height: 1px; background: rgba(255,255,255,0.1); margin: 2px 12px 4px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 11px 22px; font-size: 19px; color: #e0e0e0; }
+  .row .ck { width: 18px; text-align: center; font-size: 15px; color: #ff6b35; flex-shrink: 0; }
+  .row.active { color: #ff6b35; font-weight: 700; background: rgba(255,107,53,0.12); }
+  .row .tag { margin-left: auto; font-size: 14px; font-weight: 600; }
+  .tag.valid { color: #4caf50; } .tag.wrong { color: #cc9900; } .tag.no { color: #666; }
+  .row.dim { color: #6a6a78; }
+
+  .controls { position: absolute; right: 44px; bottom: 44px; display: flex; align-items: center; gap: 16px; z-index: 6; }
+  .btn-sub { display: inline-flex; align-items: center; gap: 6px; background: #ff6b35; color: #fff;
+    font-weight: 800; font-size: 16px; padding: 7px 12px; border-radius: 5px; box-shadow: 0 4px 14px rgba(255,107,53,0.4); }
+  .caret { display: inline-flex; align-items: center; justify-content: center; color: #ff6b35;
+    border: 1.5px solid #ff6b35; border-radius: 4px; width: 30px; height: 30px; font-size: 16px; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="scrim"></div>
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 48 48"><rect width="48" height="48" rx="10" fill="#1a1a2e"/>
+        <rect x="15" y="17" width="18" height="6" rx="3" fill="#ff6b35"/><rect x="10" y="27" width="28" height="6" rx="3" fill="#ff6b35"/></svg>
+      <div class="name">Better Subs <span>for Crunchyroll</span></div>
+    </div>
+    <div class="headline">
+      <h1>Pick any language, <span class="accent">on the player.</span></h1>
+      <p>Every available subtitle source — with live validity badges.</p>
+    </div>
+
+    <div class="menu">
+      <div class="hd">Subtitle Source</div>
+      <div class="div"></div>
+      <div class="row"><span class="ck">✓</span>Japanese<span class="tag valid">✓ valid</span></div>
+      <div class="row active"><span class="ck">✓</span>English<span class="tag" style="color:#ff6b35">active</span></div>
+      <div class="row"><span class="ck"></span>Deutsch<span class="tag valid">✓ valid</span></div>
+      <div class="row"><span class="ck"></span>Español (Lat)<span class="tag valid">✓ valid</span></div>
+      <div class="row"><span class="ck"></span>Français<span class="tag wrong">⚠ wrong title</span></div>
+      <div class="row dim"><span class="ck"></span>Italiano<span class="tag no">no subs</span></div>
+      <div class="row"><span class="ck"></span>Português (BR)<span class="tag valid">✓ valid</span></div>
+      <div class="div"></div>
+      <div class="row dim"><span class="ck"></span>Off</div>
+    </div>
+
+    <div class="controls">
+      <span class="btn-sub">EN&nbsp;✓</span>
+      <span class="caret">▾</span>
+    </div>
+  </div>
+</body>
+</html>

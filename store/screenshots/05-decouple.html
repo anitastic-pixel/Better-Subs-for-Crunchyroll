@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Better Subs — Decoupled</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0a0a12; }
+  .frame { position: relative; width: 1280px; height: 800px; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: radial-gradient(ellipse 85% 65% at 50% -5%, #221a3a 0%, #0d0a17 60%, #07060d 100%); }
+  .brand { position: absolute; top: 40px; left: 48px; display: flex; align-items: center; gap: 14px; z-index: 4; }
+  .brand .name { color: #fff; font-size: 20px; font-weight: 700; }
+  .brand .name span { color: #9aa0b5; font-weight: 600; }
+  .headline { position: absolute; top: 132px; left: 0; right: 0; text-align: center; z-index: 4; padding: 0 60px; }
+  .headline h1 { color: #fff; font-size: 56px; line-height: 1.06; font-weight: 800; letter-spacing: -0.5px; }
+  .headline h1 .accent { color: #ff6b35; }
+  .headline p { margin-top: 16px; color: rgba(255,255,255,0.74); font-size: 22px; font-weight: 500; }
+
+  .cards { position: absolute; left: 0; right: 0; top: 300px; display: flex; justify-content: center;
+    align-items: center; gap: 40px; z-index: 4; }
+  .card { width: 360px; height: 220px; border-radius: 20px; background: #16182c; border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.45); padding: 30px 34px; display: flex; flex-direction: column; justify-content: center; }
+  .card .k { font-size: 16px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #8a90a8; }
+  .card .v { margin-top: 10px; font-size: 46px; font-weight: 800; color: #fff; }
+  .card .ic { font-size: 30px; margin-bottom: 6px; }
+  .card.audio .v { color: #7fb2ff; } .card.subs .v { color: #ff6b35; }
+  .swap { width: 78px; height: 78px; border-radius: 50%; background: #1a1a2e; border: 1px solid rgba(255,107,53,0.5);
+    display: flex; align-items: center; justify-content: center; color: #ff6b35; font-size: 36px; flex-shrink: 0;
+    box-shadow: 0 8px 30px rgba(255,107,53,0.25); }
+
+  .combos { position: absolute; left: 0; right: 0; bottom: 96px; display: flex; justify-content: center; gap: 14px; z-index: 4; }
+  .combo { padding: 11px 20px; border-radius: 999px; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12); color: #cfd2e2; font-size: 17px; font-weight: 600; }
+  .combo b { color: #fff; } .combo .o { color: #ff6b35; }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 48 48"><rect width="48" height="48" rx="10" fill="#1a1a2e"/>
+        <rect x="15" y="17" width="18" height="6" rx="3" fill="#ff6b35"/><rect x="10" y="27" width="28" height="6" rx="3" fill="#ff6b35"/></svg>
+      <div class="name">Better Subs <span>for Crunchyroll</span></div>
+    </div>
+    <div class="headline">
+      <h1>Audio and subtitles, <span class="accent">decoupled.</span></h1>
+      <p>Crunchyroll ties them together. This sets them free.</p>
+    </div>
+
+    <div class="cards">
+      <div class="card audio"><div class="ic">🎧</div><div class="k">Audio dub</div><div class="v">Deutsch</div></div>
+      <div class="swap">⇄</div>
+      <div class="card subs"><div class="ic">💬</div><div class="k">Subtitles</div><div class="v">English</div></div>
+    </div>
+
+    <div class="combos">
+      <span class="combo"><b>English dub</b> <span class="o">+</span> <b>Français subs</b></span>
+      <span class="combo"><b>日本語</b> <span class="o">+</span> <b>English subs</b></span>
+      <span class="combo"><b>Deutsch</b> <span class="o">+</span> <b>Español subs</b></span>
+    </div>
+  </div>
+</body>
+</html>

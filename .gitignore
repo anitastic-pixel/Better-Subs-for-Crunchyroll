@@ -19,3 +19,6 @@ dist/
 *.crx
 *.pem
 web-ext-artifacts/
+
+# ── Local QA output (tools/gen-fansub.mjs) ─────────────────────────────
+*-TestFansub.ass
