@@ -498,9 +498,14 @@
     // One-click translate using the saved target/source (+ popup provider) — no
     // re-picking once you're comfortable with your choices.
     onTranslate:     ()       => translateToTarget(),
+    // Shown even before MT is set up: CR rarely ships the language people come
+    // here for (e.g. Japanese), and a hidden row made translation undiscoverable.
+    // Unconfigured click lands on translateToTarget's "set up in the popup" toast.
     getTranslateAction: () =>
-      (!_translating && isMtEnabled() && isMtConfigured() && currentEp())
-        ? { label: '🌐 Translate' } : null,
+      (_translating || !currentEp()) ? null
+        : (isMtEnabled() && isMtConfigured())
+          ? { label: '🌐 Translate' }
+          : { label: `🌐 Translate to ${MT_LANG_LABELS[getMtTarget()] || getMtTarget()}… (needs setup)` },
     // The gear opens the settings panel to change target/source (persisted).
     onMtSettings:    ()       => openTranslatePanel(),
     getMtSettingsAction: () =>
