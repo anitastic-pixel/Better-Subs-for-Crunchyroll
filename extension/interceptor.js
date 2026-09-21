@@ -379,6 +379,7 @@
     'ms-MY': 'Bahasa Melayu',     'th-TH': 'ภาษาไทย',
     'id-ID': 'Bahasa Indonesia',  'vi-VN': 'Tiếng Việt',
     'te-IN': 'తెలుగు',            // seen live 2026-08 (Telugu dub sessions)
+    'ta-IN': 'தமிழ்',             // seen live 2026-09 (Tamil dub)
   };
   // Short 2-char labels shown on the toggle button while a source is active
   const LOCALE_SHORT = {
@@ -390,7 +391,7 @@
     'pl-PL':'PL','tr-TR':'TR','nl-NL':'NL','fi-FI':'FI',
     'sv-SE':'SV','nb-NO':'NO','da-DK':'DA','cs-CZ':'CS',
     'ro-RO':'RO','hu-HU':'HU','ms-MY':'MS','th-TH':'TH',
-    'id-ID':'ID','vi-VN':'VI','te-IN':'TE',
+    'id-ID':'ID','vi-VN':'VI','te-IN':'TE','ta-IN':'TA',
   };
 
   const originalFetch = window.fetch.bind(window);
@@ -4593,7 +4594,7 @@
       // How many rows CR's own Subtitles/CC menu will hold — the shape check
       // the live "no subtitles" switch validates against before clicking.
       _subMenuRows = PLAYBACK.subtitleMenuRowCount(data);
-      // No hardSubs.none AND no /1/clean/ top-level url = CR ships no
+      // No hardSubs.none AND no /clean/ top-level url = CR ships no
       // subtitle-free video for this session, so hide-official cannot help.
       _noCleanStream = !PLAYBACK.cleanStreamUrl(data);
       if (_noCleanStream) log.info(`No clean stream variant for [${currentAudio}] (url: ${String(data.url || "none").split("?")[0].slice(-60)}) — hide-official cannot remove burned-in subs.`);

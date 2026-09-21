@@ -110,7 +110,8 @@
     const none = hs && (hs.none ?? hs.None);
     const u    = entryUrl(none);
     if (u) return u;
-    return (typeof data?.url === 'string' && data.url.includes('/1/clean/')) ? data.url : null;
+    // Path was …/1/clean/dash/… until 2026-09, now …/static/majin/<asset>/clean/cenc/dash/….
+    return (typeof data?.url === 'string' && /\/clean\//.test(data.url)) ? data.url : null;
   }
 
   // The ja-JP entry in data.versions, or null.

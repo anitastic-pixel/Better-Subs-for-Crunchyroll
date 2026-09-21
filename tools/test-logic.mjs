@@ -242,6 +242,13 @@ section('Playback — cleanStreamUrl');
     PB.cleanStreamUrl({ url: CLEAN, hardSubs: { 'en-US': { url: BURNED } } }), CLEAN);
   eq('burned url with no none entry → null',
     PB.cleanStreamUrl({ url: BURNED, hardSubs: { 'en-US': { url: BURNED } } }), null);
+  // 2026-09 path shape: no /0|1/ segment, locale as enus/clean, extra /cenc/.
+  const CLEAN2 = 'https://www.crunchyroll.com/playback/v2/manifest/G7PU34GQE/static/majin/e00354934a00354945jajp/clean/cenc/dash/manifest.mpd';
+  const BURNED2 = CLEAN2.replace('/clean/', '/enus/');
+  eq('falls back to a 2026-09 clean top-level url',
+    PB.cleanStreamUrl({ url: CLEAN2, hardSubs: { 'en-US': { url: BURNED2 } } }), CLEAN2);
+  eq('2026-09 burned url with no none entry → null',
+    PB.cleanStreamUrl({ url: BURNED2, hardSubs: {} }), null);
   eq('no url at all → null', PB.cleanStreamUrl({ hardSubs: {} }), null);
   eq('tolerates absent data', [PB.cleanStreamUrl({}), PB.cleanStreamUrl(null)], [null, null]);
   // The url-less `none` key in `subtitles` must not leak into the picker as a
