@@ -159,11 +159,11 @@
     if (!data || data.type !== POST.SET_SETTING) return;
     const token = toggleToken();
     if (!token || data.token !== token) return;
-    const entry = SETTINGS.SCHEMA.find((e) => e.key === data.key);
-    if (!entry) return;
-    let v = data.value;
-    if (entry.type === 'bool') v = (v === true || v === 'true');
-    chrome.storage.local.set({ [entry.key]: v });
+    // Only the three ▾ "Show" switches come through here.  The token is readable
+    // off the DOM, so don't hand a page script the rest of the schema.
+    if (!['showDialogue', 'showSigns', 'hideOfficialSubs'].includes(data.key)) return;
+    // Throws once this script is orphaned by an extension update.
+    try { chrome.storage.local.set({ [data.key]: data.value === true || data.value === 'true' }); } catch (_) {}
   });
 
   // ── libass (SubtitlesOctopus) sign renderer ────────────────────────────────
@@ -450,6 +450,9 @@
         jpStatus:     document.documentElement.getAttribute(ATTR.JP_STATUS) ?? STATUS.NONE,
         jpActive:     document.documentElement.getAttribute(ATTR.JP_ACTIVE) === 'true',
         mtConfigured: document.documentElement.getAttribute(ATTR.MT_CONFIGURED) ?? '-',
+        // Target/source are picked on the player and live in page localStorage.
+        mtTarget:     (() => { try { return localStorage.getItem('crSubFix_mt_target'); } catch (_) { return null; } })(),
+        mtSource:     (() => { try { return localStorage.getItem('crSubFix_mt_source'); } catch (_) { return null; } })(),
         activeInfo,
         settings,
         trace,

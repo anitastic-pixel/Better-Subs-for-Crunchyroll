@@ -95,7 +95,7 @@
   const panelStyle = NS.uiTheme.panel;
 
   // Re-exports so existing call sites keep working unchanged.
-  const { parseSubtitles, normalizeSubText, applyAlpha } = PARSER;
+  const { parseSubtitles, normalizeSubText } = PARSER;
   const { escapeHtml } = UI;
   const { hexToRgba } = CUE_STYLE;
   const { buildAnchorMap, remasterCues, computeMedianDelta, estimateGlobalOffset, shiftCues, MIN_ANCHORS } = REMASTER;
@@ -1303,7 +1303,7 @@
     if (!ep) return;
     if (_translating) return;  // already running — ignore re-trigger
     if (!isMtEnabled() || !isMtConfigured()) {
-      showErrorToast('Set up and enable machine translation in the extension popup first.');
+      showErrorToast('Open the extension popup → Translation, add your free API key and enable it — then translate here.');
       return;
     }
     const target   = (opts && opts.target)   || getMtTarget();
@@ -1529,7 +1529,7 @@
   function openTranslatePanel() {
     const ep = currentEp();
     if (!ep || !videoEl) return;
-    if (!isMtEnabled() || !isMtConfigured()) { showErrorToast('Set up and enable machine translation in the extension popup first.'); return; }
+    if (!isMtEnabled() || !isMtConfigured()) { showErrorToast('Open the extension popup → Translation, add your free API key and enable it — then translate here.'); return; }
     if (_translating) { showErrorToast('A translation is already running.'); return; }
     closeTranslatePanel();
 
@@ -2075,7 +2075,7 @@
     ['es-419', 'Español (Lat)'], ['fr-FR', 'Français'], ['pt-BR', 'Português (BR)'],
     ['it-IT', 'Italiano'], ['ru-RU', 'Русский'],
   ];
-  const getMtProvider = () => SETTINGS.read(html, 'mtProvider') || 'deepl';
+  const getMtProvider = () => 'deepl';
   const MT_PROVIDER_LABELS = { deepl: 'DeepL' };
   // MT tracks are keyed by target AND provider (provider is always 'deepl' now,
   // but the key shape is kept stable so existing saved tracks still resolve).
@@ -2176,6 +2176,7 @@
     // next overlay activates before its playback JSON lands.
     _hardsubStream = false;
     _noCleanStream = false;
+    _strippedThisLoad = false;
     _subMenuRows   = 0;   // stale count would let crSubtitlesOff trust the wrong menu
     // Through the wrapper so content.js gets a SIGN_ASS clear — a bare write
     // leaves libass rendering the outgoing episode's typeset signs.
@@ -2258,7 +2259,7 @@
 
     const carryJpGuid = (wasWatch && isWatch && oldSlug && oldSlug === newSlug) ? priorJp : null;
 
-    log.info(`SPA nav ${oldSlug || '-'} → ${newSlug || '-'} | priorJpGuid=${priorEp?.jpGuid || '-'} priorMapped=${priorEp?.getMappedJpGuid?.() || '-'} priorAuth=${!!priorAuth} carry=${carryJpGuid || '-'} memo=${(newSlug && slugJpMemo.get(newSlug)?.jpGuid) || '-'}`);
+    log.info(`SPA nav slug ${oldSlug ? 'y' : '-'} → ${newSlug ? 'y' : '-'} same=${oldSlug === newSlug} | priorJpGuid=${priorEp?.jpGuid || '-'} priorMapped=${priorEp?.getMappedJpGuid?.() || '-'} priorAuth=${!!priorAuth} carry=${carryJpGuid || '-'} memo=${(newSlug && slugJpMemo.get(newSlug)?.jpGuid) || '-'}`);
     teardownPageChrome();
     EP.disposeCurrent();
     const guid = getEpisodeGuid();
@@ -2275,7 +2276,7 @@
       if (plantJpGuid) {
         ep.setMappedJpGuid(plantJpGuid);
         if (plantAuth) { ep.setCapturedAuth(plantAuth); ep.setAuthHeaders(plantAuth); }
-        log.info(`Planting JP guid ${plantJpGuid}${plantAuth ? ' + auth' : ''}${carryJpGuid ? ' (carry)' : ' (slug memo)'} (slug=${newSlug || '-'}).`);
+        log.info(`Planting JP guid ${plantJpGuid}${plantAuth ? ' + auth' : ''}${carryJpGuid ? ' (carry)' : ' (slug memo)'} (slug=${newSlug ? 'y' : '-'}).`);
         // Prefetch now whenever we can actually fetch it (cached → no auth needed,
         // or we have auth for a live fetch).  Skipping when we have neither avoids
         // latching prefetchTriggered on a doomed attempt.
@@ -2613,7 +2614,7 @@
         `https://www.crunchyroll.com/playback/v1/token/${jpGuid}/${token}`,
         { method: 'DELETE', credentials: 'include', headers: authHeaders }
       );
-      log.info('JP session released:', token);
+      log.info('JP session released.');
     } catch (_) {}
   }
 
@@ -2837,6 +2838,8 @@
   // hide-official nothing to fall back to.  Then say so instead of offering a
   // fix that cannot work.
   let _noCleanStream     = false;
+  // This page load's playback JSON went through stripOfficialSubs.
+  let _strippedThisLoad  = false;
   let _hardsubWarnedGuid = null;
 
   // Hide-official can be flipped from the ▾ menu OR the popup, so the live
@@ -2850,10 +2853,24 @@
   // at page load can't drive CR's menu on its own.
   let _wasHideOfficial = null;
   function onHideOfficialSetting() {
+    // CR's hydration recovery deletes our data-* attrs and content.js restores
+    // them a microtask later.  An absent attr decodes as the default (false), so
+    // without this the wipe+restore reads as off→on and drives CR's menu (and
+    // its account-wide preference) with no human involved.
+    if (html.getAttribute('data-cr-hide-official') === null) return;
     const now  = isHideOfficialSubs();
     const prev = _wasHideOfficial;
     _wasHideOfficial = now;
     if (prev === null || prev === now) return;   // first read, or no change
+    if (!isEnabled()) return;                    // master switch off → never touch CR's player
+    if (_strippedThisLoad) {
+      // This load's playback JSON was already rewritten to the clean stream with
+      // empty subtitle maps: nothing to switch live (CR's menu has no rows to
+      // match), and only a reload can bring its subtitles back.
+      if (!now) showErrorToast("Reload to bring Crunchyroll's own subtitles back.",
+        () => setTimeout(() => location.reload(), 400), 'Reload');
+      return;
+    }
     if (!now) {
       // Turned CR's own subtitles back ON.  We set its preference to None and
       // can't read back what it was before, so point at the menu that can.
@@ -2865,8 +2882,13 @@
         showErrorToast("Crunchyroll's subtitles turned off (its own player setting).", null, 'OK');
       } else if (_noCleanStream) {
         showErrorToast("Crunchyroll ships no subtitle-free video for this episode — its subtitles are burned in and can't be hidden.", null, 'OK');
-      } else if (_subMenuRows > 1) {
-        showErrorToast('This video has Crunchyroll subtitles burned in — reload to remove them.',
+      } else if (_subMenuRows !== 1) {
+        // > 1: CR has subtitle rows we couldn't switch live.  0: no playback JSON
+        // seen for this page (dub switch without a refetch) — state unknown.
+        // Either way the reload applies the setting; 1 means nothing to hide.
+        showErrorToast(_subMenuRows > 1
+          ? 'This video has Crunchyroll subtitles burned in — reload to remove them.'
+          : "Reload to hide Crunchyroll's own subtitles.",
           () => setTimeout(() => location.reload(), 400), 'Reload');
       }
     });
@@ -2913,7 +2935,7 @@
     for (let i = 0; i < 12 && !rows.length; i++) { await nap(100); rows = subtitleMenuRows(); }
     if (rows.length !== _subMenuRows) {
       log.warn(`No-subtitles: subtitle menu has ${rows.length} rows, this session's tracks say ${_subMenuRows} — leaving CR's menu alone.`);
-      if (!wasOpen && subtitleMenuRows().length) btn.click();
+      if (!wasOpen && document.querySelector(TRACK_MENU_SEL)) btn.click();
       return false;
     }
     rows[rows.length - 1].click();          // "None"
@@ -3435,7 +3457,7 @@
     const span = document.createElement('span');
     span.textContent = text;
     const btn = document.createElement('button');
-    btn.textContent = actionLabel || 'Retry';
+    btn.textContent = actionLabel || (onRetry ? 'Retry' : 'OK');
     Object.assign(btn.style, {
       background:   THEME.accent,
       color:        THEME.accentText,
@@ -4475,7 +4497,9 @@
     // untouched data from a clone above, and JP/source subtitle data is fetched
     // via originalFetch (which bypasses this wrapper), so the player seeing an
     // empty list never starves the overlay.
-    return isHideOfficialSubs() ? stripOfficialSubs(response) : response;
+    if (!isHideOfficialSubs()) return response;
+    _strippedThisLoad = true;
+    return stripOfficialSubs(response);
   }
 
   async function stripOfficialSubs(response) {

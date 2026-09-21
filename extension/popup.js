@@ -182,7 +182,12 @@ const LOCALE_LABELS = {
   'zh-CN': 'Chinese (Simpl.)','zh-TW':'Chinese (Trad.)',
   'hi-IN': 'Hindi',     'ko-KR': 'Korean',
 };
-const localeName = (l) => l ? (LOCALE_LABELS[l] ?? l) : null;
+// Custom source ids ('custom:local', 'custom:mt:<target>:<provider>') aren't
+// locales — name them instead of leaking the raw id into the status card.
+const localeName = (l) => !l ? null
+  : l.startsWith('custom:mt:') ? `Machine translation (${l.split(':')[2]})`
+  : l.startsWith('custom:')    ? 'Your subtitle file'
+  : (LOCALE_LABELS[l] ?? l);
 
 function setStatus(key, info) {
   const cfg = STATUS_DISPLAY[key] ?? STATUS_DISPLAY[S.NONE];
@@ -195,8 +200,12 @@ function setStatus(key, info) {
   // when nothing's playing.
   const grid    = document.getElementById('stGrid');
   const hint    = document.getElementById('stHint');
-  const showing = info?.source ? localeName(info.source) : null;
-  const audio   = info?.audio  ? localeName(info.audio)  : null;
+  // A null source with the overlay on is the default track (the source menu
+  // treats it as ja-JP too).  Audio needs its own name: LOCALE_LABELS['ja-JP']
+  // is the SUBTITLE label ("English (Japanese source)"), wrong for Japanese audio.
+  const src     = info?.source ?? (info?.overlay === 'on' ? 'ja-JP' : null);
+  const showing = src ? localeName(src) : null;
+  const audio   = info?.audio === 'ja-JP' ? 'Japanese' : info?.audio ? localeName(info.audio) : null;
   const sync    = info?.remaster === 'synced'  ? 'Synced'
                 : info?.remaster === 'pending' ? 'Adjusting…' : null;
   if (grid && (showing || audio)) {
@@ -425,7 +434,6 @@ function populateFromSettings(s) {
   styleTargetSeg?.querySelectorAll('.seg-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.val === styleTarget);
   });
-  const styleLabel = (styleTarget === 'signs') ? 'signs' : 'dialogue';
   if (toggleStyleOverrideLabel) toggleStyleOverrideLabel.textContent =
     styleTarget === 'signs' ? 'Custom style for signs' : 'Override subtitle style';
 
@@ -513,22 +521,23 @@ let mtHasKey = false;
 
 const MT_HOSTS = ['https://api-free.deepl.com/*', 'https://api.deepl.com/*'];
 
-function refreshMtStatus() {
+function refreshMtStatus(deniedText) {
   if (!mtStatus) return;
-  chrome.storage.local.get(['mtApiKey'], ({ mtApiKey: key }) => {
+  chrome.storage.local.get({ mtApiKey: '', mtEnabled: true }, ({ mtApiKey: key, mtEnabled: on }) => {
     mtHasKey = !!key;
     if (mtApiKey) mtApiKey.placeholder = mtHasKey ? 'Key saved — paste to replace' : 'Paste your API key';
     if (!mtHasKey) { mtStatus.textContent = ''; return; }
     chrome.permissions.contains({ origins: MT_HOSTS }, (granted) => {
-      if (granted) { mtStatus.textContent = '✓ Enabled — key stored on this device'; mtStatus.style.color = '#16e0a8'; }
-      else         { mtStatus.textContent = '⚠ Click “Save & enable” to grant network access'; mtStatus.style.color = '#cc9900'; }
+      if (granted && on) { mtStatus.textContent = '✓ Ready — key stored on this device'; mtStatus.style.color = '#16e0a8'; }
+      else if (granted)  { mtStatus.textContent = 'Key saved — translation is switched off above'; mtStatus.style.color = '#cc9900'; }
+      else               { mtStatus.textContent = deniedText || '⚠ Click “Save & enable” to grant network access'; mtStatus.style.color = '#cc9900'; }
     });
   });
 }
 refreshMtStatus();
 
 toggleMtEnabled?.addEventListener('change', () => {
-  chrome.storage.local.set({ mtEnabled: toggleMtEnabled.checked });
+  chrome.storage.local.set({ mtEnabled: toggleMtEnabled.checked }, () => refreshMtStatus());
 });
 mtSave?.addEventListener('click', () => {
   const key = mtApiKey.value.trim();
@@ -542,11 +551,7 @@ mtSave?.addEventListener('click', () => {
   // or denied.  Then request the DeepL host permission in the same gesture.
   if (key) chrome.storage.local.set({ mtApiKey: key }, () => { mtApiKey.value = ''; });
   chrome.permissions.request({ origins: MT_HOSTS }, (granted) => {
-    refreshMtStatus();
-    if (!granted) {
-      mtStatus.textContent = '⚠ Key saved — click “Allow” on the permission prompt to enable translation.';
-      mtStatus.style.color = '#cc9900';
-    }
+    refreshMtStatus(granted ? null : '⚠ Key saved — click “Allow” on the permission prompt to enable translation.');
   });
 });
 
@@ -919,7 +924,7 @@ async function buildDiagnostics(full) {
     lines.push(`settings: enabled=${s.enabled} auto=${s.autoActivate} ` +
                `hideOfficial=${s.hideOfficialSubs} styleOverride=${s.styleOverride}`);
     lines.push(`mt      : configured=${page.mtConfigured ?? '-'} provider=${s.mtProvider} ` +
-               `target=${s.mtTarget} source=${s.mtSource || 'auto'}`);
+               `target=${page.mtTarget || s.mtTarget} source=${page.mtSource || s.mtSource || 'auto'}`);
     lines.push('--- recent activity (most recent last) ---');
     // Keep the most recent trace that fits (headroom reserved for the note + the
     // Worker's ~4000 cap), trimming the oldest lines.

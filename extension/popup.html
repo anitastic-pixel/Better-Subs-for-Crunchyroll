@@ -92,16 +92,6 @@
     }
 
     /* ── Status bar ── */
-    .status-bar {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      background: var(--panel-2);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-radius: 7px;
-      padding: 9px 12px;
-      margin-bottom: 12px;
-    }
     .status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -111,10 +101,6 @@
     }
     .status-dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-    .status-text { font-size: 12px; color: var(--text-2); font-weight: 500; }
-    /* Initial hidden state is inline on the element (see markup) so popup.js can
-       reveal it with style.display='' — keep no display rule here. */
-    .status-detail { font-size: 10px; color: var(--text-mute); letter-spacing: 0.3px; }
 
     /* ── Section + rows ── */
     .section { margin-bottom: 8px; }
