@@ -44,7 +44,7 @@ small diagnostic bundle is sent to the developer to help fix the bug:
   including the paths of subtitle files loaded from Crunchyroll's CDN). Before
   it leaves your device, URL query strings (where signed access tokens live),
   email addresses, and long hexadecimal ids are removed;
-- your extension settings, and an optional note you type.
+- your extension settings, and the note you type (popup reports).
 
 You can turn the diagnostic details off in the popup (**Include diagnostics**).
 A report from the popup then sends only the version, the platform string, and

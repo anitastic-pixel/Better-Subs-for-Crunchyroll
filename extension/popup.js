@@ -948,10 +948,18 @@ reportSend?.addEventListener('click', async () => {
     setTimeout(() => { reportSend.textContent = 'Send a report'; }, 2500);
     return;
   }
+  // A note is required: the log shows what the extension did, never what the
+  // user saw go wrong (and it's empty on a tab the extension isn't loaded in).
+  const note = (reportNote?.value || '').trim();
+  if (!note) {
+    reportNote?.focus();
+    reportSend.textContent = 'Add a line about what went wrong first';
+    setTimeout(() => { reportSend.textContent = 'Send a report'; }, 2500);
+    return;
+  }
   reportSend.disabled = true;
   reportSend.textContent = 'Sending…';
-  const note   = (reportNote?.value || '').trim();
-  const bundle = (note ? `note    : ${note}\n` : '') + await buildDiagnostics(toggleIncludeDiag.checked);
+  const bundle = `note    : ${note}\n` + await buildDiagnostics(toggleIncludeDiag.checked);
   let ok = false;
   try {
     const resp = await fetch(REPORT_ENDPOINT, {
