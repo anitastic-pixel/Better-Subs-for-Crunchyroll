@@ -41,22 +41,20 @@
     let onTrackChange   = null;   // TextTrackList listeners bound to the active video
     let onTrackAdd      = null;
 
+    // Broad class patterns for CR's subtitle container.  Each excludes our own
+    // overlay and asbplayer's (its "asbplayer-subtitles-container-bottom"
+    // matches the subtitle+container pattern — users pair it with hide-official).
+    const SUB_SELECTORS = [
+      '[class*="subtitle"][class*="container"]', '[class*="subtitle"][class*="render"]',
+      '[class*="subtitle"][class*="wrapper"]',   '[class*="subtitle"][class*="display"]',
+      '[class*="Subtitle"]',                     '[class*="subtitles--"]',
+      '[class*="player-subtitles"]',             '[class*="CaptionRenderer"]',
+      '[class*="caption"][class*="container"]',  '[data-testid*="subtitle"]',
+      '[data-testid*="caption"]',                '[class*="vilos"]',
+    ].map(s => `${s}:not(#${overlayId}):not([class*="asbplayer"])`);
+
     function buildSuppressCSS() {
-      const patterns = [
-        `.bitmovinplayer-container > div:not([class]):not([id])`,
-        `[class*="subtitle"][class*="container"]:not(#${overlayId})`,
-        `[class*="subtitle"][class*="render"]:not(#${overlayId})`,
-        `[class*="subtitle"][class*="wrapper"]:not(#${overlayId})`,
-        `[class*="subtitle"][class*="display"]:not(#${overlayId})`,
-        `[class*="Subtitle"]:not(#${overlayId})`,
-        `[class*="subtitles--"]:not(#${overlayId})`,
-        `[class*="player-subtitles"]:not(#${overlayId})`,
-        `[class*="CaptionRenderer"]:not(#${overlayId})`,
-        `[class*="caption"][class*="container"]:not(#${overlayId})`,
-        `[data-testid*="subtitle"]:not(#${overlayId})`,
-        `[data-testid*="caption"]:not(#${overlayId})`,
-        `[class*="vilos"]:not(#${overlayId})`,
-      ];
+      const patterns = [`.bitmovinplayer-container > div:not([class]):not([id])`, ...SUB_SELECTORS];
       return patterns.join(',\n') + ' { visibility: hidden !important; }';
     }
 
@@ -74,17 +72,9 @@
 
       const root = video?.closest('[class*="player"]') ?? video?.parentElement;
       if (!root) return null;
-      const selectors = [
-        '[class*="subtitle"][class*="container"]', '[class*="subtitle"][class*="render"]',
-        '[class*="subtitle"][class*="wrapper"]',   '[class*="subtitle"][class*="display"]',
-        '[class*="Subtitle"]',                     '[class*="subtitles--"]',
-        '[class*="player-subtitles"]',             '[class*="CaptionRenderer"]',
-        '[class*="caption"][class*="container"]',  '[data-testid*="subtitle"]',
-        '[data-testid*="caption"]',                '[class*="vilos"]',
-      ];
-      for (const sel of selectors) {
+      for (const sel of SUB_SELECTORS) {
         const el = root.querySelector(sel);
-        if (el && el.id !== overlayId) return el;
+        if (el) return el;
       }
       return null;
     }
