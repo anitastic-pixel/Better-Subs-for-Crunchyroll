@@ -557,7 +557,7 @@ section('Service-worker translate (DeepL-only)');
   globalThis.chrome = {
     commands: { onCommand: { addListener() {} } },
     tabs: {}, action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
-    runtime: { onMessage: { addListener() {} }, onInstalled: { addListener() {} } },
+    runtime: { onMessage: { addListener() {} } },
     storage: { local: { get: async () => ({ mtApiKey: 'test-key:fx', mtProvider: 'deepl' }) } },
   };
   const bg = read('extension/background.js').replace(/importScripts\([^)]*\);/, '');

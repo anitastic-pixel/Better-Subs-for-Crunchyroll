@@ -1057,28 +1057,6 @@ try {
   if (verEl) verEl.textContent = 'v' + chrome.runtime.getManifest().version;
 } catch (_) {}
 
-// ── 1,000-users thank-you card ──────────────────────────────────────────────
-// Shown until dismissed or acted on.  background.js pre-sets the flag on fresh
-// installs, so only people who've actually used the extension get asked.
-(function initThanksCard() {
-  const card = document.getElementById('thanksCard');
-  if (!card) return;
-  const done = () => { card.hidden = true; chrome.storage.local.set({ thanks1kDone: true }); };
-  chrome.storage.local.get({ thanks1kDone: false }, ({ thanks1kDone }) => { card.hidden = thanks1kDone; });
-  const review = document.getElementById('thanksReview');
-  review.href = `https://chromewebstore.google.com/detail/${chrome.runtime.id}/reviews`;
-  review.addEventListener('click', done);
-  document.getElementById('thanksClose').addEventListener('click', done);
-  document.getElementById('thanksSurvey').addEventListener('click', () => {
-    done();
-    const help = document.getElementById('sec-help');
-    if (!help.open) document.querySelector('.stile[data-target="sec-help"]')?.click();
-    const survey = document.getElementById('surveyBox');
-    survey.open = true;
-    survey.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  });
-})();
-
 // ── Remember collapsible sections' open/closed state across popup opens ──────
 // The HTML ships all sections collapsed; once the user opens one (via a launcher
 // tile) we honour their choice next time.  UI-only state, so it lives in the
