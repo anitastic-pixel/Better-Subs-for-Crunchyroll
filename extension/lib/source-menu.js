@@ -545,7 +545,7 @@
               sub, () => { close(); onApplyLearning(native); }, true));
           } else if (!audioHasSub) {
             const note = document.createElement('div');
-            note.textContent = `No ${audioLabel} subtitles on this episode to match the audio — pick a second language below.`;
+            note.textContent = `No ${audioLabel} subtitles on this episode to match the audio — make one with ▾ Translate, or pick a second language below.`;
             note.style.cssText = `padding:0 14px 8px;font-size:10px;line-height:1.4;color:${THEME.textMuted};`;
             menuEl.appendChild(note);
           }

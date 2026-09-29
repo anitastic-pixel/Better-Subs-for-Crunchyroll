@@ -908,11 +908,11 @@ async function buildDiagnostics(full) {
     `platform: ${coarsePlatform()}`,
   ];
   if (!full) { lines.push('(diagnostics minimized — only version + platform + your note)'); return lines.join('\n'); }
-  let page = null;
+  let page = null, tab = null;
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) page = await chrome.tabs.sendMessage(tab.id, { type: MSG.GET_DIAG });
-  } catch (_) { /* no content script on the active tab → not a Crunchyroll page */ }
+  } catch (_) { /* no content script on the active tab → not Crunchyroll, or an orphaned tab */ }
 
   if (page) {
     const s = page.settings || {};
@@ -934,7 +934,10 @@ async function buildDiagnostics(full) {
     if (tail.length > room) tail = '…(older lines trimmed)\n' + tail.slice(-(room - 25));
     return header + '\n' + tail;
   }
-  lines.push('page    : (open the popup on a Crunchyroll video tab to attach activity)');
+  // tab.url needs activeTab; without it this always reads as "not Crunchyroll".
+  lines.push(/^https?:\/\/www\.crunchyroll\.com\//.test(tab?.url ?? '')
+    ? 'page    : Crunchyroll tab, extension not loaded (tab predates install/update — reload it)'
+    : 'page    : (open the popup on a Crunchyroll video tab to attach activity)');
   return lines.join('\n');
 }
 

@@ -1754,6 +1754,7 @@
       return;
     }
     if (!success) {
+      log.info(`Remaster: unavailable — ${stats.reason ?? 'no reason'}`);
       const reason = stats.reason ? `  <span style="color:rgba(255,255,255,0.4);font-size:10px;">${escapeHtml(String(stats.reason))}</span>` : '';
       hud.html(`<span style="color:#e55;">⚠</span>  Auto-sync unavailable${reason}`, 6000);
       return;
@@ -3116,12 +3117,19 @@
   // tells the user it can't match the audio).
   // Subtitle availability for a locale on this episode (availability() is
   // false only when there's neither a URL nor a session guid to fetch one
-  // from; ja-JP is owned by the JP-first fetch, mirroring the menu's
-  // localeHasContent).
+  // from).  ja-JP never counts: that row is the JP session's ENGLISH track
+  // ("English (Japanese source)") — CR ships no Japanese-text subtitles.
   function localeHasSub(ep, loc) {
-    if (!ep || !loc) return false;
-    if (loc === 'ja-JP') return !!(ep.jpCaptionUrl || ep.jpSubtitleUrl || ep.jpGuid);
+    if (!ep || !loc || loc === 'ja-JP') return false;
     return ep.catalog.availability(loc) !== false;
+  }
+
+  // The track that shows the spoken language: CR's own, else a machine
+  // translation into it (the only way to get Japanese text).  null = none.
+  function audioMatchId(ep, audio) {
+    if (!ep || !audio) return null;
+    if (localeHasSub(ep, audio)) return audio;
+    return ep.listCustomSources().find((s) => s.kind === 'mt' && s.lang === audio)?.id ?? null;
   }
 
   function learningInfo() {
@@ -3130,12 +3138,13 @@
     // Subtitle availability, not dub presence: versions() lists every audio
     // dub, so checking it was vacuously true for the playing dub and the
     // "can't match your audio" fallback could never render.
-    const hasSub = !!(ep && audio && localeHasSub(ep, audio));
+    const match  = audioMatchId(ep, audio);
     const native = getNativePref();
     return {
       audioLocale: audio || '',
-      audioLabel:  audio ? audioLabel(audio) : '',   // ja-JP audio = "Japanese", not the sub-row label
-      audioHasSub: hasSub,
+      // ja-JP audio = "Japanese", not the sub-row label; flag a machine stand-in.
+      audioLabel:  audio ? audioLabel(audio) + (match && match !== audio ? ' (translated)' : '') : '',
+      audioHasSub: !!match,
       native,
       // Whether the viewer's language is actually on THIS episode — so the CTA
       // doesn't promise a second band ("with Deutsch below") that can't load.
@@ -3149,15 +3158,17 @@
     if (nativeLocale) setNativePref(nativeLocale);
     const native  = nativeLocale || getNativePref();
     const audio   = ep.catalog.currentAudio();
+    const match   = audioMatchId(ep, audio);
     // planLearningMode expects SUBTITLE locales; filter the version list down
     // to what's actually pickable so the audio-match promise is honest.
     const locales = ep.catalog.versions().map((v) => v.locale)
       .filter((l) => localeHasSub(ep, l));
+    if (match && !locales.includes(audio)) locales.push(audio);   // MT stands in for the missing CR track
     const plan    = LEARN.planLearningMode({ audioLocale: audio, locales, native });
     markLearnHintSeen();   // an explicit pick means the feature's been found
     // Set the primary first (it (re)activates the overlay), then the secondary,
     // so maybeLoadSecondary keys off the freshly-set primary.
-    if (plan.primary) selectSource(plan.primary);
+    if (plan.primary) selectSource(plan.primary === audio ? match : plan.primary);
     selectSecondary(plan.secondary || '');
     if (plan.audioMatched) {
       log.info(`Learning mode: primary=[${plan.primary}] secondary=[${plan.secondary}] nativeAvail=${plan.nativeAvailable}.`);
@@ -3170,7 +3181,7 @@
     } else {
       log.info(`Learning mode: no audio-matched sub (audio=[${audio || '?'}]) — primary=[${plan.primary}].`);
       if (audio && !locales.includes(audio)) {
-        UI.showToast({ host: toastHost(), text: `No ${audioLabel(audio)} subtitles for this episode — showing your language only`, duration: 4000 });
+        UI.showToast({ host: toastHost(), text: `No ${audioLabel(audio)} subtitles for this episode — showing your language only. ▾ Translate can make one.`, duration: 5000 });
       }
     }
   }
@@ -3188,7 +3199,7 @@
     if (!audio) return;
     const native = getNativePref();
     if (audio === native) return;                                       // no learning gap
-    if (!ep.catalog.versions().some((v) => v.locale === audio)) return; // no audio-matched sub
+    if (!audioMatchId(ep, audio)) return;   // nothing in the spoken language (e.g. Japanese without MT)
     markLearnHintSeen();
     UI.showToast({
       host:     toastHost(),

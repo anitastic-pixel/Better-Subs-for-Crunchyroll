@@ -22,53 +22,67 @@ Mix any subtitle language with any audio on Crunchyroll — plus dual subtitles 
 
 ## Detailed description
 
-On Crunchyroll, subtitle tracks are tied to the audio dub you select. If you choose the English dub, you're limited to that dub's subtitles. 🎧
+On Crunchyroll, which subtitles you can pick depends on the audio. Choose the English dub and you usually get only that dub's own subtitles or captions. 🎧
 
-Better Subs for Crunchyroll removes that restriction, letting you use any available subtitle language with any audio track. 🌍
+Better Subs for Crunchyroll lets you use any subtitle language Crunchyroll has for an episode, whatever audio you're listening to. 🌍
 
-Watch the English dub with the original Japanese-based subtitles. Watch the Japanese audio with French subtitles. Mix and match audio and subtitles however you prefer. 🍿
+Watch the English dub with the English subtitles written for the Japanese version. They follow the Japanese script, so they won't always match what the dub says. Watch a German dub with Spanish subtitles. Mix and match however you like, as long as Crunchyroll has that language for the episode. 🍿
 
-It's also built for language learners: show the language being spoken and your own language on screen at the same time, and study a scene line by line. 📚
+For language learners, Better Subs can show the language being spoken and your own language on screen together, so you can study a scene line by line. That needs subtitles in the spoken language. Crunchyroll has them for many dubs (English, French, German, Spanish and more), but it has no Japanese-language subtitles. For Japanese text you'll need the optional machine translation (with your own DeepL key) or a subtitle file of your own. 📚
 
-By default, subtitles are fetched directly from Crunchyroll's servers — nothing is added, modified, or sourced externally — and a custom overlay preserves the original styling and positioning while letting you customize the appearance. When a language you want simply isn't offered, two optional tools fill the gap: machine-translate an existing track, or load a subtitle file of your own. ✨
+The subtitle text comes straight from Crunchyroll, and Better Subs doesn't rewrite it. It draws the subtitles in its own overlay, close to Crunchyroll's styling and positioning, and changes only what you choose: size, style, position, and timing. When the subtitles come from a different version of the episode, it may also shift their timing to line up with your dub. ✨
+
+🆕 WHAT'S NEW IN 2.8.1
+Thank you to everyone who sent a report. Most of these fixes started as one. 💛
+• Hiding Crunchyroll's own subtitles works again after a recent Crunchyroll change, and on most episodes it now takes effect without a reload.
+• Better Subs no longer changes Crunchyroll's own subtitle setting unless you ask it to.
+• The Translate option is always in the ▾ menu, even before you set up a DeepL key, so it's easier to find.
+• Learning mode no longer claims Japanese subtitles that Crunchyroll doesn't have. With Japanese audio, it now uses your machine-translated Japanese track if you've made one.
+• If a Crunchyroll tab was open before Better Subs was installed or updated, the pop-up now offers a one-click "Reload tab" instead of saying you're not on an episode.
+• If the extension is installed twice, the second copy steps aside instead of clashing with the first.
+• Tamil dubs are now labeled.
+• Reports no longer include show titles or playback session IDs, and they now flag when a tab only needs a reload.
 
 🚀 FEATURES
-• Independent audio and subtitles — use any available subtitle language regardless of the selected dub.
-• NEW • Learning mode — one tap shows the language being spoken (matched to your audio automatically) on top, with your own language beneath it: the classic study layout for picking up a language from what you're watching. 📚
-• NEW • Dual subtitles — show any two subtitle languages stacked at once, and choose which track draws the on-screen typeset signs (primary, secondary, or both). 🈁
-• NEW • Study tools — pause automatically at the end of each line for reading and shadowing, replay the last line, or copy the current line to your clipboard. 🎯
-• In-player subtitle picker — browse every available subtitle language from a dropdown; problem tracks are flagged (wrong file, or no subtitles) so you can steer around them. 📊
-• Accurate subtitle & sign rendering — positioned signs, rotations, per-line styling, and fade effects render through a real subtitle engine (the same kind fansubbers use) instead of being flattened to plain text. 🎨
-• Show on screen — independently toggle the dialogue, the typeset signs, and Crunchyroll's own built-in subtitles, so only what you want appears. 🙈
-• Automatic wrong-file recovery — detects when Crunchyroll has linked an incorrect subtitle file and automatically retrieves a correct version from another dub when available. 🛠️
-• Extensive customization: ⚙️
-   - Auto-enable subtitles
-   - Subtitle size scaling (25–250%)
-   - Timing offset adjustment (±60 minutes in 0.1-second increments) ⏱️
-   - Vertical positioning
-   - Independent styling for dialogue and typeset signs — fonts, colors, outlines, shadows, sizes, plus frosted-glass background boxes for dialogue
-   - Live preview for all appearance settings
+• Any subtitles with any audio — pick from every subtitle language Crunchyroll has for the episode, whichever dub you're watching.
+• Auto-sync — different versions of an episode can be edited differently, so their timing may not match. Better Subs re-times the subtitles to your dub when it finds enough matching lines. Sometimes it can only estimate the shift, or can't sync at all; then you can adjust the timing yourself. ⏱️
+• Learning mode — one tap puts the spoken language on top (matched to your audio) and your own language underneath. It needs subtitles in the spoken language. For Japanese audio, make a machine-translated Japanese track first (see below) and Learning mode will use it. 📚
+• Dual subtitles — show any two subtitle languages stacked, and choose which one draws the on-screen signs (first, second, or both). 🈁
+• Study tools — pause at the end of each line for reading or shadowing, replay the last line, or copy the current line. 🎯
+• In-player subtitle menu — every available language in one dropdown. Languages with a known problem are marked ("wrong title" or "no subs"). 📊
+• Sign rendering — positioned signs, rotations, and fades are drawn with libass, the open-source engine used by fansubbers and video players like mpv, instead of being flattened into plain text. 🎨
+• Show on screen — turn dialogue, signs, and Crunchyroll's own subtitles on or off separately. Crunchyroll's new player often burns its subtitles into the video. Turning them off sets Crunchyroll's own subtitle menu to None, and turning them back on can mean picking a language there again or reloading. On episodes where Crunchyroll has no subtitle-free video, they can't be hidden. 🙈
+• Wrong-file recovery — catches subtitle files that clearly belong to another episode (for example, one that ends minutes before the video does) and swaps in a correct copy from another dub when one exists. It won't catch every mismatch. 🛠️
+• Customization: ⚙️
+   - Turn subtitles on automatically
+   - Subtitle size (25–250%)
+   - Timing offset in 0.1-second steps ⏱️
+   - Vertical position
+   - Separate styling for dialogue and signs: font, color, outline, shadow, size, and background boxes (including frosted glass)
+   - Live preview in the pop-up
 • Keyboard shortcuts: ⌨️
-   - Alt+J — toggle the subtitle overlay
-   - Alt+R — replay the current line (great for study)
-   - Alt+C — copy the current subtitle line to the clipboard
-   - C — quickly enable or disable subtitles while watching
-• Per-episode memory — remembers your last selected subtitle language for each episode. 💾
-• Machine translation (optional) — fill in a subtitle language Crunchyroll doesn't carry for a title, like Japanese or Korean, by translating an existing track with your own DeepL key; the on-screen typeset signs are translated too. Machine output is an approximation, not authored subtitles. 🌐
-• Load your own subtitles — upload a custom .ass, .srt, or .vtt file (a fansub, or your own edit) and play it over the video, complete with its typeset signs and embedded fonts. 📂
+   - Alt+J — toggle the subtitle overlay (changeable in Chrome's shortcut settings)
+   - Alt+R — replay the current line
+   - Alt+C — copy the current line
+   - C — turn subtitles on or off while watching
+• Remembers your language — the subtitle language you pick carries over to your next episodes. 💾
+• Machine translation (optional) — fills in a language Crunchyroll doesn't have for an episode, such as Japanese, by translating an existing track with your own DeepL API key. Signs are translated too, though Japanese, Chinese, and Korean signs are drawn in a simpler style. The subtitle text goes from your browser straight to DeepL under your key and never reaches us. It's machine output, so expect mistakes; it isn't a substitute for professional subtitles. You can export the result as an .srt file, with or without the original language alongside. 🌐
+• Your own subtitles — play an .ass, .ssa, .srt, or .vtt file over the video (a fansub or your own edit). .ass files keep their signs and embedded fonts. The file stays in your browser. 📂
 
 💡 GOOD TO KNOW
-Occasionally Crunchyroll links the wrong subtitle file to an episode on their own servers. Better Subs detects this and swaps in a correct copy from another dub when one exists; if every copy on their side is wrong, the source picker flags that language until Crunchyroll fixes the file. 🔍
+• Better Subs can only use what Crunchyroll has. If a language isn't offered for an episode, it won't appear unless you machine-translate it or load your own file.
+• Crunchyroll sometimes links the wrong subtitle file to an episode. If every copy on Crunchyroll is wrong, the menu marks that language until Crunchyroll fixes it. 🔍
+• A Crunchyroll tab that was open before you installed or updated Better Subs has to be reloaded before the extension works in it.
 
 🤝 HELP SHAPE IT
-Better Subs is new and under active development, so you may hit the occasional rough edge. Bug reports, feature ideas, and feedback are genuinely welcome — they directly steer where the extension goes next.
+Better Subs is a small project that changes often, so you may run into rough edges. Your bug reports, ideas, and feedback decide what gets fixed and built next. Every fix in this release started with one.
 
-Reporting is built right in: if something breaks, a one-click "Send a report?" prompt appears by the player, and you can send a report (with an optional note) anytime from the pop-up menu. 🪲 Reports attach a small diagnostic log to help fix the issue faster — it's optional (toggle it off in the pop-up), access tokens are stripped out, and nothing is sold or shared. 🔒 Prefer GitHub? Open an issue: https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues
+To report a problem, use the "send a report?" prompt that appears by the player after an error, or send a report anytime from the pop-up, with an optional note. 🪲 A report includes the extension version, your OS and Chrome version, and your note. Unless you switch it off in the pop-up, it also includes a diagnostic log: the episode ID, your extension settings, and recent extension activity. Signed links, tokens, and email addresses are removed before it's sent. Reports go only to the developer and are never sold. 🔒 Prefer GitHub? Open an issue: https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues
 
 🛡️ NOT AFFILIATED
-Better Subs for Crunchyroll is not affiliated with, endorsed by, or sponsored by Crunchyroll. "Crunchyroll" is a trademark of its respective owner, used only to describe what this extension works with. The extension adds no content of its own — it re-selects subtitle tracks Crunchyroll already serves to your account, and any machine translation or uploaded file comes from you (and your chosen translation provider), not from us. A Crunchyroll account/subscription is required to watch.
+Better Subs for Crunchyroll is not affiliated with, endorsed by, or sponsored by Crunchyroll. "Crunchyroll" is a trademark of its owner, used only to say what this extension works with. The extension adds no content of its own: it switches between subtitle tracks Crunchyroll already serves to your account. Machine translations come from DeepL under your own key, and files you load are your own. You need a Crunchyroll account and subscription to watch.
 
-Better Subs is free. If it's useful to you and you'd like to support development, you can buy me some coffee: https://buymeacoffee.com/ani_ — entirely optional, and it never gates any feature. ☕
+Better Subs is free. If it's useful and you'd like to support development, you can buy me a coffee: https://buymeacoffee.com/ani_ — entirely optional, and it never unlocks features. ☕
 
 ---
 
