@@ -77,6 +77,11 @@ async function handleTranslate(payload) {
 }
 
 // ── Keyboard shortcut → active tab relay ──────────────────────────────────
+// Fresh installs skip the popup's 1,000-users thank-you (it asks for a review).
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === 'install') chrome.storage.local.set({ thanks1kDone: true });
+});
+
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== 'toggle-jp-cc') return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

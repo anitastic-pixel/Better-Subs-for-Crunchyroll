@@ -33,7 +33,7 @@ For language learners, Better Subs can show the language being spoken and your o
 The subtitle text comes straight from Crunchyroll, and Better Subs doesn't rewrite it. It draws the subtitles in its own overlay, close to Crunchyroll's styling and positioning, and changes only what you choose: size, style, position, and timing. When the subtitles come from a different version of the episode, it may also shift their timing to line up with your dub. ✨
 
 🆕 WHAT'S NEW IN 2.8.1
-Thank you to everyone who sent a report. Most of these fixes started as one. 💛
+🎉 Better Subs just passed 1,000 users. Thank you for watching with it, and thank you to everyone who sent a report: most of these fixes started as one. 💛
 • Hiding Crunchyroll's own subtitles works again after a recent Crunchyroll change, and on most episodes it now takes effect without a reload.
 • Better Subs no longer changes Crunchyroll's own subtitle setting unless you ask it to.
 • The Translate option is always in the ▾ menu, even before you set up a DeepL key, so it's easier to find.
@@ -75,7 +75,7 @@ Thank you to everyone who sent a report. Most of these fixes started as one. �
 • A Crunchyroll tab that was open before you installed or updated Better Subs has to be reloaded before the extension works in it.
 
 🤝 HELP SHAPE IT
-Better Subs is a small project that changes often, so you may run into rough edges. Your bug reports, ideas, and feedback decide what gets fixed and built next. Every fix in this release started with one.
+Better Subs is a small project that changes often, so you may run into rough edges. Your bug reports, ideas, and feedback decide what gets fixed and built next.
 
 To report a problem, use the "send a report?" prompt that appears by the player after an error, or send one anytime from the pop-up with a line about what went wrong. 🪲 A report includes the extension version, your OS and Chrome version, and your note. Unless you switch it off in the pop-up, it also includes a diagnostic log: the episode ID, your extension settings, and recent extension activity. Signed links, tokens, and email addresses are removed before it's sent. Reports go only to the developer and are never sold. 🔒 Prefer GitHub? Open an issue: https://github.com/anitastic-pixel/Better-Subs-for-Crunchyroll/issues
 
