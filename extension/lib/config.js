@@ -23,5 +23,18 @@
     // Leave '' when the Worker doesn't enforce one.  (If you set it in the
     // Worker but not here, every report/survey silently 401s.)
     REPORT_TOKEN: '',
+    // Coarse, non-identifying platform string (OS family + Chrome major) for
+    // reports.  Never the full User-Agent — that's a fingerprinting surface.
+    coarsePlatform: function coarsePlatform() {
+      const ua = navigator.userAgent || '';
+      let os = 'Unknown';
+      if (/Windows NT/.test(ua)) os = 'Windows';
+      else if (/Mac OS X/.test(ua)) os = 'macOS';
+      else if (/CrOS/.test(ua)) os = 'ChromeOS';
+      else if (/Android/.test(ua)) os = 'Android';
+      else if (/Linux/.test(ua)) os = 'Linux';
+      const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
+      return `${os} · Chrome ${m ? m[1] : '?'}`;
+    },
   };
 })();

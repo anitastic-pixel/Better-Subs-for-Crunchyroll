@@ -23,6 +23,11 @@
  *       null when the file parses to zero cues (caller surfaces the message).
  *   CRSubFix.customSource.makeMtSource({ id, target, source, label, srcCues, signRawAss })
  *       → record
+ *   CRSubFix.customSource.planMtJob(cueTexts, signTexts, saved)
+ *       → { texts, nDlg, out, todo, resumed } — one flat job (dialogue then
+ *       signs); `saved` partial progress is reused only when its length matches.
+ *   CRSubFix.customSource.mtCuesFrom(cues, out) → Cue[] with translated text
+ *       (srcText keeps the original; a missing translation keeps the source).
  */
 (function () {
   'use strict';
@@ -73,5 +78,21 @@
     };
   }
 
-  NS.CRSubFix.customSource = { LOCAL_ID, isCustomId, makeLocalSource, makeMtSource };
+  function planMtJob(cueTexts, signTexts, saved) {
+    const texts = [...cueTexts, ...(signTexts || [])];
+    const out   = new Array(texts.length);
+    let resumed = 0;
+    if (Array.isArray(saved) && saved.length === texts.length) {
+      for (let i = 0; i < texts.length; i++) if (saved[i] != null) { out[i] = saved[i]; resumed++; }
+    }
+    const todo = [];
+    for (let i = 0; i < texts.length; i++) if (out[i] == null) todo.push(i);
+    return { texts, nDlg: cueTexts.length, out, todo, resumed };
+  }
+
+  function mtCuesFrom(cues, out) {
+    return cues.map((c, k) => ({ ...c, text: out[k] || c.text, srcText: c.text }));
+  }
+
+  NS.CRSubFix.customSource = { LOCAL_ID, isCustomId, makeLocalSource, makeMtSource, planMtJob, mtCuesFrom };
 })();

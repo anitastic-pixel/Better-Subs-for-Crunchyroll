@@ -10,8 +10,6 @@
  * Exposes:
  *   CRSubFix.parser.parseSubtitles(text, url)  → Cue[]
  *   CRSubFix.parser.normalizeSubText(t)        — strip markup for matching
- *   CRSubFix.parser.applyAlpha(cssColor, a)    — override alpha on rgb/rgba
- *   CRSubFix.parser.parseColorHex(assHex)      — ASS BGR/AABBGGRR → CSS color
  */
 (function () {
   'use strict';
@@ -32,13 +30,6 @@
       return a < 0.99 ? rgb.replace('rgb(', 'rgba(').replace(')', `,${a.toFixed(2)})`) : rgb;
     }
     return parseBGR(hex);
-  }
-
-  function applyAlpha(color, alpha) {
-    if (!color || alpha == null || alpha >= 0.99) return color;
-    const m = color.match(/rgba?\((\d+),(\d+),(\d+)/);
-    if (!m) return color;
-    return `rgba(${m[1]},${m[2]},${m[3]},${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
   }
 
   // Parse a numeric style field, falling back to `d` only when the field is
@@ -190,6 +181,7 @@
 
           const start     = parseASSTime(f[evStart]);
           const end       = parseASSTime(f[evEnd]);
+          if (!validSpan(start, end)) continue;
           const styleName = f[evStyle]?.trim() ?? 'Default';
           const rawText   = f.slice(evText).join(',');
 
@@ -327,5 +319,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.parser = { parseSubtitles, normalizeSubText, applyAlpha, parseColorHex };
+  NS.CRSubFix.parser = { parseSubtitles, normalizeSubText };
 })();

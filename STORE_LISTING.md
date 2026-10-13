@@ -32,7 +32,12 @@ For language learners, Better Subs can show the language being spoken and your o
 
 The subtitle text comes straight from Crunchyroll, and Better Subs doesn't rewrite it. It draws the subtitles in its own overlay, close to Crunchyroll's styling and positioning, and changes only what you choose: size, style, position, and timing. When the subtitles come from a different version of the episode, it may also shift their timing to line up with your dub. ✨
 
-🆕 WHAT'S NEW IN 2.8.2
+🆕 WHAT'S NEW IN 2.9.0
+• Translate your own subtitle file: in Translation settings, pick "Your uploaded file" as the From track and DeepL translates your upload instead of Crunchyroll's track.
+• Picking a different From track now re-translates and replaces that language's translation. You no longer have to remove the old one first.
+• Subtitles now appear and disappear on the exact video frame, instead of up to a quarter-second late.
+• Auto-sync is about 5× faster, and the extension does less work in the background while you watch.
+• The pop-up shows language names in their own language.
 • Works alongside asbplayer: hiding Crunchyroll's subtitles no longer hides asbplayer's too.
 🎉 Better Subs just passed 1,000 users. Thank you for watching with it, and thank you to everyone who sent a report: most of these fixes started as one. 💛
 • Hiding Crunchyroll's own subtitles works again after a recent Crunchyroll change, and on most episodes it now takes effect without a reload.
@@ -132,4 +137,4 @@ Privacy policy URL: https://github.com/anitastic-pixel/Better-Subs-for-Crunchyro
 - [ ] Privacy practices tab: check Web history + User activity (see above); update the storage justification with the report note.
 - [ ] Screenshots (1280×800 or 640×400): popup with style controls, the on-player source picker, an episode with the overlay active. Min 1, up to 5.
 - [ ] Optional: 440×280 small promo tile.
-- [ ] Upload dist/better-subs-for-crunchyroll-v2.8.2.zip.
+- [ ] Upload dist/better-subs-for-crunchyroll-v2.9.0.zip.

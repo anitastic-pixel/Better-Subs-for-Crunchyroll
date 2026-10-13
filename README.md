@@ -16,7 +16,7 @@ A Chrome extension that lets you mix and match subtitle languages independently 
 - **Dual subtitles** — show a second language alongside the first (target language + your own, say), stacked above the primary line. Pick it from the source picker's "Second subtitle" submenu; both tracks come from the same timeline so they stay in sync
 - **Watch & learn** — `Alt+R` replays the line on screen (press again to step back line-by-line), `Alt+C` copies it to your clipboard, and an optional "pause at end of each line" mode stops on every subtitle for shadowing/reading
 - **Subtitle sync** — custom sources auto-align to the video when they share a language with a Crunchyroll track, or you can align them by hand with a two-point sync panel right on the player
-- **Source picker** — on-player dropdown lists every available subtitle locale with live validation badges so you can see at a glance which sources are usable, plus a "Custom" section for your uploads and translations
+- **Source picker** — on-player dropdown lists every available subtitle locale and flags the ones that are wrong-title or empty, plus a "Custom" section for your uploads and translations
 - **ASS overlay with full typesetting support** — renders subtitles via a custom overlay that supports positioned signs, per-dialogue style tags, and fade animations, matching the original subtitle file's intent. Positioned signs are rendered with the real libass engine for pixel-accurate typesetting
 - **Subtitle validation** — automatically detects cross-linked wrong-title subtitle files (duration mismatch) and probes other dub sessions for a working replacement
 - **Turn Crunchyroll's own subtitles off** — Crunchyroll burns its subtitles into the video itself, so no amount of CSS can hide them. The *Crunchyroll's own subtitles* switch sets Crunchyroll's own subtitle track to **None**, which swaps the player to the subtitle-free stream on the spot — and keeps later episodes clean too
@@ -79,11 +79,10 @@ Japanese, English, English (UK), Deutsch, Español (Lat), Español (España), Fr
 
 A small button appears on the Crunchyroll player. The two-letter code shows the active subtitle source (e.g. **JP**, **EN**, **DE**). Click it to toggle the overlay on/off.
 
-Click the source label next to the button to open the **source picker** and switch to any available subtitle locale. Each row shows a validation badge:
+Click the source label next to the button to open the **source picker** and switch to any available subtitle locale. Usable rows carry no badge; problem rows are flagged:
 
 | Badge | Meaning |
 |---|---|
-| valid | Subtitle file confirmed to match this episode |
 | ⚠ wrong title | Crunchyroll has linked the wrong subtitle file to this locale (see Known Issues) |
 | no subs | No subtitle file found for this locale |
 
@@ -96,7 +95,7 @@ The picker also has a **Show on screen ›** submenu — toggle the **dialogue**
 Uploaded files and machine translations appear in the source picker as their own rows (tagged **file** or **machine**), each with a **✕** to remove it. The actions that create and manage them live one level down, under **Manage sources… ›** in the picker:
 
 - **＋ Load subtitle file…** — pick a local `.ass`, `.ssa`, `.srt`, or `.vtt` file. It's parsed in the browser and added as a custom source; nothing is uploaded anywhere. `.ass` files keep their positioned signs and any embedded fonts.
-- **🌐 Translate** / **⚙ Translation settings…** — machine-translate an existing track into another language using your own DeepL key (set the provider and key in the popup; pick the target and source track under *Translation settings*). The translation is added as a custom source labelled **machine** and cached per episode so it never re-spends your quota on a reload.
+- **🌐 Translate** / **⚙ Translation settings…** — machine-translate an existing track into another language using your own DeepL key (add the key in the popup under *Translation*; pick the target and source track — including your own uploaded file — under *Translation settings*). The translation is added as a custom source labelled **machine** and cached per episode so it never re-spends your quota on a reload.
 - **⚙ Adjust sync…** / **⬇ Export…** — shown when a custom source is active: align its timing, or save it out as SRT (machine translations export bilingually, translation over source, for easy proofreading).
 
 Custom sources are remembered per episode. A same-language upload auto-aligns to the video; a cross-language one (e.g. a Japanese fansub over an English track) is aligned with the two-point sync panel — mark the first line, mark the last line, and the timing is fitted between them.
@@ -115,7 +114,7 @@ For studying or just catching a line you missed:
 
 - **`Alt+R` — replay the current line.** Jumps the video back to the start of the subtitle on screen and plays it. Press again to step back line-by-line.
 - **`Alt+C` — copy the current line** to your clipboard (for a dictionary lookup, a study deck, or quoting).
-- **Pause at end of each line** (popup → *Playback*). Stops playback the moment each subtitle finishes — with the line still on screen — for shadowing or reading at your own pace.
+- **Pause at end of each line** (popup → *Timing & study*). Stops playback the moment each subtitle finishes — with the line still on screen — for shadowing or reading at your own pace.
 
 ### Keyboard shortcuts
 

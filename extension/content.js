@@ -82,7 +82,7 @@
   // Keep in sync with popup changes in real time
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    chrome.storage.local.get(SETTINGS.defaults(), applySettings);
+    if (SETTINGS.SCHEMA.some(e => e.key in changes)) chrome.storage.local.get(SETTINGS.defaults(), applySettings);
     if ('mtApiKey' in changes) refreshMtConfigured();
   });
 

@@ -5,7 +5,7 @@
  * These cover everything that does NOT need a live browser: parsers, the
  * Episode custom-source registry + persistence, the sync transforms, the
  * settings schema (incl. the rule that the MT key is never mirrored), and the
- * service worker's DeepL/Google request/response shaping.
+ * service worker's DeepL request/response shaping.
  *
  * Run:  node tools/test-logic.mjs
  * The browser-only behaviours (file picker, menu DOM, overlay, permission
@@ -56,6 +56,8 @@ load(read('extension/lib/episode.js'));
 load(read('extension/lib/remaster.js'));
 load(read('extension/lib/sub-sync.js'));
 load(read('extension/lib/settings-schema.js'));
+load(read('extension/lib/wrong-title.js'));
+load(read('extension/lib/sub-suppression.js'));
 const NS = globalThis.CRSubFix;
 const P  = NS.parser;
 const E  = NS.episode;
@@ -117,6 +119,13 @@ section('Parsers');
   const ss = P.parseSubtitles(spanSrt, 'x.srt');
   eq('zero-span + malformed cues dropped', ss.length, 1);
   eq('valid cue survives the span filter', ss[0].text, 'kept');
+
+  // Same guard on ASS Dialogue lines.
+  const spanAss = '[Script Info]\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n' +
+                  'Dialogue: 0,0:00:05.00,0:00:05.00,Default,,0,0,0,,zero-span\n' +
+                  'Dialogue: 0,garbage,0:00:06.00,Default,,0,0,0,,bad start\n' +
+                  'Dialogue: 0,0:00:07.00,0:00:09.00,Default,,0,0,0,,kept\n';
+  eq('ASS zero-span + NaN-start cues dropped', P.parseSubtitles(spanAss, 'x.ass').map((c) => c.text), ['kept']);
 }
 
 // ── 2. Custom-source registry + persistence ────────────────────────────────
@@ -186,7 +195,7 @@ section('Learning mode (audio-matched stack)');
   eq('native: es-MX → es-419', L.defaultNativeLocale('es-MX'), 'es-419');
   eq('native: es-ES → es-ES', L.defaultNativeLocale('es-ES'), 'es-ES');
   eq('native: pt-PT → pt-PT', L.defaultNativeLocale('pt-PT'), 'pt-PT');
-  eq('native: pt-BR → pt-BR', L.defaultNativeLocale('pt'), 'pt-BR');
+  eq('native: pt → pt-BR', L.defaultNativeLocale('pt'), 'pt-BR');
   eq('native: en-GB → en-GB', L.defaultNativeLocale('en-GB'), 'en-GB');
   eq('native: unknown/empty → en-US', [L.defaultNativeLocale('xx'), L.defaultNativeLocale('')], ['en-US', 'en-US']);
 
@@ -273,7 +282,7 @@ section('Playback — cleanStreamUrl');
   };
   eq('menu rows — en-US dub (CC + sub + None), the case the hardSubs count got wrong',
     PB.subtitleMenuRowCount(dub), 3);
-  eq('hardSubs count would have said 2 (regression guard)', Object.keys(dub.hardSubs).length, 2);
+  ok('row count is not the hardSubs count (regression guard)', PB.subtitleMenuRowCount(dub) !== Object.keys(dub.hardSubs).length);
   eq('no None entry → no None row', PB.subtitleMenuRowCount({ subtitles: { 'en-US': { url: 'U' } } }), 1);
   eq('tolerates absent maps', [PB.subtitleMenuRowCount({}), PB.subtitleMenuRowCount(null)], [0, 0]);
 }
@@ -479,6 +488,34 @@ section('Remaster global-offset fallback');
   ok('shiftCues(…, 0) returns a copy, not the input', R.shiftCues(src, 0) !== src);
 }
 
+// ── 3a3. Remaster golden — piecewise map across an inserted scene ────────────
+// Golden for the wordJaccard pre-tokenize refactor: output must not move.
+section('Remaster golden (inserted scene)');
+{
+  const mkCue = (start, text) => ({ start, end: start + 2, text });
+  const line = (i) => `the quick line number ${i} says hello ${i * 7}`;
+  const src = [], ref = [];
+  // 30 shared lines every 20s; the ref cut inserts a 20s scene after line 15.
+  for (let i = 0; i < 30; i++) {
+    src.push(mkCue(10 + i * 20, line(i)));
+    ref.push(mkCue(10 + i * 20 + (i >= 15 ? 20 : 0), line(i)));
+  }
+  // One outlier: a line whose ref copy sits 85s late (in-window, off-trend).
+  src.push(mkCue(305, 'a stray outlier line that drifted badly'));
+  ref.push(mkCue(390, 'a stray outlier line that drifted badly'));
+  src.sort((a, b) => a.start - b.start); ref.sort((a, b) => a.start - b.start);
+
+  const anchors = R.buildAnchorMap(src, ref);
+  ok(`anchor map succeeds (${anchors.length} ≥ ${R.MIN_ANCHORS})`, anchors.length >= R.MIN_ANCHORS);
+  ok('outlier anchor dropped', !anchors.some((a) => a.srcTime === 305));
+  ok('line before the insert maps ~+0', Math.abs(R.interpolateTime(100, anchors) - 100) < 0.01);
+  ok('line after the insert maps ~+20', Math.abs(R.interpolateTime(500, anchors) - 520) < 0.01);
+
+  const uni = src.map((c) => mkCue(c.start + 7.5, c.text));
+  const g = R.estimateGlobalOffset(src, uni);
+  ok(`uniform shift recovered exactly (${g?.offset})`, !!g && Math.abs(g.offset - 7.5) < 1e-9 && g.agreement === 1);
+}
+
 // ── 3b. Custom-source factory (lib/custom-source.js) ────────────────────────
 section('Custom-source factory');
 {
@@ -504,6 +541,17 @@ section('Custom-source factory');
 
   const mt = CS.makeMtSource({ id: 'custom:mt:ja-JP:deepl', target: 'ja-JP', source: 'en-US', label: 'Japanese (DeepL)', srcCues: srtLocal.srcCues, signRawAss: null });
   eq('mt record shape', [mt.id, mt.kind, mt.lang, mt.mtSource, mt.sync.mode], ['custom:mt:ja-JP:deepl', 'mt', 'ja-JP', 'en-US', 'none']);
+
+  // MT job plan: dialogue then signs in one flat job; partial progress resumes
+  // only when its length matches (a re-upload / different sign count restarts).
+  const fresh = CS.planMtJob(['a', 'b'], ['SIGN'], null);
+  eq('plan: flat job, split point, all todo', [fresh.texts, fresh.nDlg, fresh.todo, fresh.resumed], [['a', 'b', 'SIGN'], 2, [0, 1, 2], 0]);
+  const res = CS.planMtJob(['a', 'b'], ['SIGN'], ['A', null, 'S']);
+  eq('plan: resume keeps saved, todo = gaps', [res.out[0], res.out[2], res.todo, res.resumed], ['A', 'S', [1], 2]);
+  eq('plan: length-mismatched partial is ignored', CS.planMtJob(['a', 'b'], null, ['A']).todo, [0, 1]);
+  eq('mtCuesFrom: missing translation keeps source, srcText kept',
+    CS.mtCuesFrom([{ text: 'a', start: 1 }, { text: 'b', start: 2 }], ['A', undefined]).map(c => [c.text, c.srcText, c.start]),
+    [['A', 'a', 1], ['b', 'b', 2]]);
 }
 
 // ── 3c. Sign-track MT round-trip (lib/sign-track.js) ────────────────────────
@@ -524,13 +572,11 @@ section('Sign-track extract/rebuild');
 section('Settings schema');
 {
   const d = S.defaults();
-  eq('mt defaults', [d.mtProvider, d.mtTarget, d.mtSource], ['deepl', 'ja-JP', '']);
+  eq('dead MT selectors gone from schema', ['mtProvider', 'mtTarget', 'mtSource'].filter(k => k in d), []);
   ok('mtApiKey NOT in schema (never mirrored to DOM)', !('mtApiKey' in d));
   ok('no data-cr-mt-key attribute exists', !S.ATTRS.some((a) => /key/i.test(a)));
 
   const el = { _a: {}, setAttribute(k, v) { this._a[k] = v; }, getAttribute(k) { return k in this._a ? this._a[k] : null; } };
-  S.writeAttrs(el, { ...d, mtProvider: 'deepl', mtTarget: 'ko-KR', mtSource: 'en-US' });
-  eq('mt round-trip', [S.read(el, 'mtProvider'), S.read(el, 'mtTarget'), S.read(el, 'mtSource')], ['deepl', 'ko-KR', 'en-US']);
 
   // Per-layer visibility ("Show on screen") — default true, round-trips, and the
   // single-key write() helper sets ONLY that key's attr (used by the player's
@@ -540,8 +586,84 @@ section('Settings schema');
   eq('show-layer round-trip off', [S.read(el, 'showDialogue'), S.read(el, 'showSigns')], [false, false]);
   S.write(el, 'showSigns', true);
   eq('write() flips one key only', [S.read(el, 'showDialogue'), S.read(el, 'showSigns')], [false, true]);
+  const before = JSON.stringify(el._a);
   S.write(el, 'nonexistentKey', true);   // unknown key is a silent no-op
-  ok('write() ignores unknown key', S.read(el, 'nonexistentKey') === undefined);
+  eq('write() ignores unknown key (attrs unchanged)', JSON.stringify(el._a), before);
+
+  // Every schema key round-trips a NON-default value (a default would pass
+  // even if encode/decode dropped it).
+  const nd = (e) => e.type === 'bool' ? !e.default : e.type === 'int' ? e.default + 3
+                  : e.type === 'float' ? e.default + 0.5 : e.default + 'x';
+  const want = Object.fromEntries(S.SCHEMA.map((e) => [e.key, nd(e)]));
+  const el2 = { _a: {}, setAttribute(k, v) { this._a[k] = v; }, getAttribute(k) { return k in this._a ? this._a[k] : null; } };
+  S.writeAttrs(el2, want);
+  const got = S.readAll(el2);
+  const bad = S.SCHEMA.filter((e) => got[e.key] !== want[e.key] || S.read(el2, e.key) !== want[e.key]).map((e) => e.key);
+  eq(`all ${S.SCHEMA.length} schema keys round-trip a non-default value`, bad, []);
+}
+
+// ── 4b. Catalog validation, storage TTL, wrong-title policy, suppression CSS ─
+section('Validation + storage + wrong-title + suppression');
+{
+  const SG = NS.storage;
+  globalThis.localStorage = mkStore();
+  // setValidation is monotonic: 'ok' is never downgraded; a bad verdict can upgrade.
+  const saved = [];
+  const cat = NS.createCatalog({ saveValidation: (d) => { saved.push(d); SG.lsSet('val', d, 60000); } });
+  cat.setValidation('x', 'ok');
+  cat.setValidation('x', 'wrong-title');
+  eq('ok is never downgraded', cat.validation('x'), 'ok');
+  cat.setValidation('y', 'wrong-title');
+  cat.setValidation('y', 'ok');
+  eq('wrong-title upgrades to ok', cat.validation('y'), 'ok');
+  ok('save adapter fired on each accepted update', saved.length === 3);
+  const cat2 = NS.createCatalog({ loadValidation: () => SG.lsGet('val') });
+  eq('loadValidation round-trip', [cat2.validation('x'), cat2.validation('y')], ['ok', 'ok']);
+
+  // lsSet TTL: past expiry → null AND the key is removed.
+  const realNow = Date.now;
+  try {
+    let now = 1e12;
+    Date.now = () => now;
+    SG.lsSet('ttl', { a: 1 }, 1000);
+    eq('lsGet before expiry', SG.lsGet('ttl'), { a: 1 });
+    now += 1001;
+    eq('lsGet after expiry → null', SG.lsGet('ttl'), null);
+    eq('expired key removed', globalThis.localStorage._m.has('ttl'), false);
+  } finally { Date.now = realNow; }
+
+  // wrong-title validate: 'short' only when the sub ends > 300s before the video.
+  const WT = NS.wrongTitle;
+  const endAt = (t) => [{ start: 0, end: 10 }, { start: t - 2, end: t }];
+  eq('validate: ok', WT.validate(endAt(1400), 1440), 'ok');
+  eq('validate: short', WT.validate(endAt(1000), 1440), 'short');
+  eq('validate: exactly 300s gap is still ok', WT.validate(endAt(1140), 1440), 'ok');
+  eq('validate: unknown (no cues / no duration)', [WT.validate([], 1440), WT.validate(endAt(1400), NaN), WT.validate(endAt(30), 59)], ['unknown', 'unknown', 'unknown']);
+
+  // validateAll: a transient session fetch failure must NOT persist 'no-subs';
+  // a definitive "no track" and a duration-failing file both persist.
+  const run = async (fetchResult, row) => {
+    const c = NS.createCatalog({});
+    c.setVersions([{ locale: 'de-DE', guid: 'g1' }]);
+    if (row) c.recordSession('ja-JP', row);
+    await WT.validateAll({
+      ep: { catalog: c, authHeaders: {}, disposed: false },
+      getVideoDurationSec: () => 1440,
+      fetchAndParseSubs: async () => endAt(600),            // 840s short → wrong title
+      fetchSubUrlForSource: async () => fetchResult,
+    });
+    return c;
+  };
+  ok('transient fetch failure → no verdict persisted', !(await run({ fetchFailed: true })).hasValidation('de-DE'));
+  eq('definitive no-track → no-subs', (await run({ url: null })).validation('de-DE'), 'no-subs');
+  eq('short file, no replacement → wrong-title', (await run({ fetchFailed: true }, { 'en-US': 'U' })).validation('en-US'), 'wrong-title');
+
+  // Suppression CSS: every selector except the bitmovin one spares asbplayer.
+  const css = NS.createSubSuppression({ overlayId: 'ov' }).buildSuppressCSS();
+  const sels = css.slice(0, css.indexOf(' {')).split(',\n');
+  ok('first selector is the bitmovin one', sels[0].startsWith('.bitmovinplayer-container'));
+  eq('every non-bitmovin selector excludes asbplayer + our overlay',
+    sels.slice(1).filter((s) => !s.includes(':not([class*="asbplayer"])') || !s.includes(':not(#ov)')), []);
 }
 
 // ── 5. Service-worker translate (DeepL-only since v1.7.1) ───────────────────
@@ -558,7 +680,7 @@ section('Service-worker translate (DeepL-only)');
     commands: { onCommand: { addListener() {} } },
     tabs: {}, action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
     runtime: { onMessage: { addListener() {} } },
-    storage: { local: { get: async () => ({ mtApiKey: 'test-key:fx', mtProvider: 'deepl' }) } },
+    storage: { local: { get: async () => ({ mtApiKey: 'test-key:fx' }) } },
   };
   const bg = read('extension/background.js').replace(/importScripts\([^)]*\);/, '');
   load(bg + '\nglobalThis.__bg={handleTranslate,deeplTranslate,deeplTarget,deeplSource};');

@@ -48,7 +48,7 @@
   const panelStyle  = NS.CRSubFix.uiTheme.panel;
 
   function createSourceMenu({
-    getEpisode, isOverlayActive,
+    getEpisode, isOverlayActive, localeHasContent,
     localeLabels = {},
     onSelectLocale, onTurnOff,
     onSelectCustom, onLoadFile, onRemoveCustom, onAdjustSync, onExport,
@@ -88,18 +88,6 @@
       // don't permanently mutate CR's layout (which can shift its own
       // absolutely-positioned controls).
       if (positionedTarget) { positionedTarget.style.position = ''; positionedTarget = null; }
-    }
-
-    // true/false/null availability for a locale.  ja-JP is owned by the
-    // Episode's JP-first session fetch (catalog doesn't see it); everything
-    // else routes through the catalog.
-    function localeHasContent(ep, locale) {
-      if (!ep) return false;
-      if (locale === 'ja-JP') {
-        if (ep.jpCaptionUrl || ep.jpSubtitleUrl) return true;
-        return ep.jpGuid ? null : false;
-      }
-      return ep.catalog.availability(locale);
     }
 
     // Display label for a locale row.  Appends "(CC)" when the pick will serve
@@ -560,7 +548,7 @@
         for (const v of ep.catalog.versions()) {
           if (v.locale === primary) continue;
           const label = localeRowLabel(ep, v.locale);
-          menuEl.appendChild(makeRow(label, cur === v.locale, localeHasContent(ep, v.locale), () => {
+          menuEl.appendChild(makeRow(label, cur === v.locale, localeHasContent(v.locale), () => {
             close(); onSelectSecondary?.(v.locale);
           }, null, null));
         }
@@ -665,7 +653,7 @@
       for (const v of ep.catalog.versions()) {
         const label      = localeRowLabel(ep, v.locale);
         const isActive   = on && (curLocale === v.locale);
-        const hasContent = localeHasContent(ep, v.locale);
+        const hasContent = localeHasContent(v.locale);
         // Catalog owns both the version list and per-locale validation status.
         const validation = ep.catalog.validation(v.locale);
         list.appendChild(makeRow(label, isActive, hasContent, () => {

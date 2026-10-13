@@ -12,7 +12,6 @@
  * URL handling and the Episode raw-text cache.
  *
  * Public surface:
- *   CRSubFix.wrongTitle.THRESHOLD_SEC
  *   CRSubFix.wrongTitle.validate(cues, videoDurationSec)
  *     → 'ok' | 'short' | 'unknown'
  *   CRSubFix.wrongTitle.findReplacement({ lang, ep, fetchAndParseSubs,
@@ -174,5 +173,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.wrongTitle = { THRESHOLD_SEC, validate, findReplacement, validateAll };
+  NS.CRSubFix.wrongTitle = { validate, findReplacement, validateAll };
 })();

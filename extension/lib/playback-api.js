@@ -12,8 +12,6 @@
  * caching, and Episode wiring stay in interceptor.js.
  *
  * Exposes:
- *   CRSubFix.playbackApi.EN_LOCALES                 → ['en-US','en-GB','en']
- *   CRSubFix.playbackApi.entryUrl(entry)            → url string | null
  *   CRSubFix.playbackApi.subtitleMap(data)          → { [locale]: url }
  *   CRSubFix.playbackApi.captionLocales(data)       → [locale] sourced from captions
  *   CRSubFix.playbackApi.pickEn(rawCaptionsOrSubs)  → best English url | null
@@ -131,5 +129,5 @@
 
   const NS = (typeof self !== 'undefined' ? self : globalThis);
   NS.CRSubFix = NS.CRSubFix || {};
-  NS.CRSubFix.playbackApi = { EN_LOCALES, entryUrl, subtitleMap, captionLocales, pickEn, jpVersion, audioVersions, cleanStreamUrl, subtitleMenuRowCount };
+  NS.CRSubFix.playbackApi = { subtitleMap, captionLocales, pickEn, jpVersion, audioVersions, cleanStreamUrl, subtitleMenuRowCount };
 })();

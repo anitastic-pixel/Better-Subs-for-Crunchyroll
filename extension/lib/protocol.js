@@ -45,7 +45,6 @@
     NONE:        'none',
     READY:       'ready',
     ACTIVE:      'active',
-    RELOAD:      'reload',
     ERROR:       'error',
     UNAVAILABLE: 'unavailable',
   };

@@ -65,7 +65,7 @@
     return;
   }
   if (!NS) { console.warn('[CR Sub Fix] interceptor.js bail: self.CRSubFix is undefined'); return; }
-  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme','learning'].filter(k => !NS[k]);
+  const _missing = ['settings','storage','parser','ui','createCatalog','episode','protocol','cueStyle','createCueRenderer','createSubSuppression','wrongTitle','remaster','createSourceMenu','playbackApi','signTrack','subSync','customSource','uiTheme','learning','locales'].filter(k => !NS[k]);
   if (_missing.length) {
     console.warn('[CR Sub Fix] interceptor.js bail: missing modules:', _missing, 'present:', Object.keys(NS));
     return;
@@ -73,6 +73,17 @@
   // Claim the page only once we know this copy can actually run — a copy that
   // bails above must leave the field to the other one.
   window.__crSubFixInstalled = true;
+
+  // Debug trace ring (crSubFix_trace).  Held in memory and flushed to
+  // sessionStorage on a short debounce + pagehide — re-serialising the whole
+  // ~60KB ring on every log line was a measurable hot path.  Declared outside
+  // the try so the module-level catch below can flush it too.
+  let traceRing = null, traceTimer = 0;
+  const flushTrace = () => {
+    clearTimeout(traceTimer); traceTimer = 0;
+    try { if (traceRing) sessionStorage.setItem('crSubFix_trace', JSON.stringify(traceRing)); } catch (_) {}
+  };
+  window.addEventListener('pagehide', flushTrace);
 
   // Wrap the rest of the IIFE so any throw is logged instead of silenced.
   try {
@@ -131,14 +142,18 @@
     .replace(/\b[0-9a-f]{32,}\b/gi, '<id>');
   const traceMirror = (level, args) => {
     try {
-      const arr  = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]');
+      if (!traceRing) {
+        try { traceRing = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]'); } catch (_) {}
+        if (!Array.isArray(traceRing)) traceRing = [];
+      }
+      const arr  = traceRing;
       const guid = (location.pathname.split('/')[2] || '?').slice(0, 9);
       arr.push(redactSensitive(`${Date.now()} ${guid} [${level}] ` + args.map(a => {
         try { return typeof a === 'string' ? a : JSON.stringify(a); }
         catch (_) { return String(a); }
       }).join(' ')));
       while (arr.length > TRACE_MAX) arr.shift();
-      sessionStorage.setItem(TRACE_KEY, JSON.stringify(arr));
+      traceTimer ||= setTimeout(flushTrace, 500);
     } catch (_) {}
   };
   const log = {
@@ -152,8 +167,8 @@
     window.crSubFixDebug = {
       on:    () => { try { localStorage.setItem('crSubFix_debug', '1'); } catch (_) {} return 'CR Sub Fix verbose logging ON — reload to see it in the console.'; },
       off:   () => { try { localStorage.removeItem('crSubFix_debug'); } catch (_) {} return 'CR Sub Fix verbose logging OFF — reload to apply.'; },
-      dump:  () => { try { return JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]').join('\n'); } catch (_) { return ''; } },
-      clear: () => { try { sessionStorage.removeItem(TRACE_KEY); } catch (_) {} return 'CR Sub Fix trace cleared.'; },
+      dump:  () => { flushTrace(); try { return JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]').join('\n'); } catch (_) { return ''; } },
+      clear: () => { clearTimeout(traceTimer); traceTimer = 0; traceRing = null; try { sessionStorage.removeItem(TRACE_KEY); } catch (_) {} return 'CR Sub Fix trace cleared.'; },
       // Throws an uncaught error from our own code so the on-error report nudge
       // can be tested without waiting for a real bug (no-op unless a
       // REPORT_ENDPOINT is configured).
@@ -250,35 +265,11 @@
           return out.join('\n');
         } catch (e) { return 'assInfo error: ' + (e && e.message); }
       },
-      // Tune the typeset-sign size factor (default 0.9) to match CR exactly.
-      // e.g. crSubFixDebug.signScale(0.85).  Repaints immediately.
-      signScale: (x) => {
-        if (typeof x === 'number' && x > 0 && x <= 2) {
-          try { localStorage.setItem('crSubFix_signscale', String(x)); } catch (_) {}
-          try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
-          return 'Sign scale = ' + x + ' (repainted; default 0.9).';
-        }
-        let cur = 0.9; try { const v = parseFloat(localStorage.getItem('crSubFix_signscale')); if (v) cur = v; } catch (_) {}
-        return 'Sign scale = ' + cur + '. Set with crSubFixDebug.signScale(0.85) — range 0.1–2.';
-      },
-      // Tune the 3-D perspective distance (px) for \frx/\fry signs.  Smaller =
-      // stronger foreshortening.  e.g. crSubFixDebug.persp(250).  Repaints.
-      persp: (x) => {
-        if (typeof x === 'number' && x > 0) {
-          try { localStorage.setItem('crSubFix_persp', String(x)); } catch (_) {}
-          try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
-          return 'Perspective = ' + x + 'px (repainted; default ≈ video height).';
-        }
-        let cur = 'auto(≈video height)'; try { const v = parseFloat(localStorage.getItem('crSubFix_persp')); if (v) cur = v + 'px'; } catch (_) {}
-        return 'Perspective = ' + cur + '. Set with crSubFixDebug.persp(1400) — bigger = flatter/subtler.';
-      },
-      // Opens the in-player Typeset-tuning slider panel (perspective / 3-D / skew
-      // / rotation / size) for dialling the sign transforms in live.
-      tune: () => { try { openTypesetTunePanel(); return 'Typeset tuning panel opened (drag the title to move it).'; } catch (e) { return 'tune error: ' + (e && e.message); } },
       // Toggle the real-libass (SubtitlesOctopus) sign renderer vs the CSS one.
       libass: (on) => {
         if (typeof on === 'boolean') {
           try { localStorage.setItem('crSubFix_libass', on ? '1' : '0'); } catch (_) {}
+          _libassMemo = undefined;
           try { renderer.invalidate(); pushSignLayer(); onTimeUpdate(); } catch (_) {}
           return 'libass signs = ' + on + (on ? '' : ' (CSS renderer handles signs).');
         }
@@ -356,43 +347,9 @@
   const OVERLAY_ID       = 'cr-jp-cc-overlay';
   const LOCALE_PREF_KEY       = 'crSubFix_preferred_locale';
   const ANCHOR_TTL            = 30 * 24 * 60 * 60 * 1000; // 30 days
-  // MIN_ANCHORS, buildAnchorMap, remasterCues, computeMedianDelta live in
-  // lib/remaster.js — aliased near the top of this file.
 
-  // Human-readable names for audio-locale codes (each dub = a subtitle source option)
-  const LOCALE_LABELS = {
-    'ja-JP': 'English (Japanese source)', 'en-US': 'English',
-    'en-GB': 'English (UK)',      'de-DE': 'Deutsch',
-    'es-419':'Español (Lat)',     'es-ES': 'Español (España)',
-    'ca-ES': 'Català',            'fr-FR': 'Français',
-    'pt-BR': 'Português (BR)',    'pt-PT': 'Português (PT)',
-    'it-IT': 'Italiano',          'ru-RU': 'Русский',
-    'ar-ME': 'العربية',            'ar-SA': 'العربية (SA)',
-    'zh-CN': '中文 (简)',           'zh-TW': '中文 (繁)',
-    'zh-HK': '中文 (港)',
-    'hi-IN': 'हिंदी',             'ko-KR': '한국어',
-    'pl-PL': 'Polski',            'tr-TR': 'Türkçe',
-    'nl-NL': 'Nederlands',        'fi-FI': 'Suomi',
-    'sv-SE': 'Svenska',           'nb-NO': 'Norsk',
-    'da-DK': 'Dansk',             'cs-CZ': 'Čeština',
-    'ro-RO': 'Română',            'hu-HU': 'Magyar',
-    'ms-MY': 'Bahasa Melayu',     'th-TH': 'ภาษาไทย',
-    'id-ID': 'Bahasa Indonesia',  'vi-VN': 'Tiếng Việt',
-    'te-IN': 'తెలుగు',            // seen live 2026-08 (Telugu dub sessions)
-    'ta-IN': 'தமிழ்',             // seen live 2026-09 (Tamil dub)
-  };
-  // Short 2-char labels shown on the toggle button while a source is active
-  const LOCALE_SHORT = {
-    'ja-JP':'JP','en-US':'EN','en-GB':'EN','de-DE':'DE',
-    'es-419':'ES','es-ES':'ES','ca-ES':'CA',
-    'fr-FR':'FR','pt-BR':'PT','pt-PT':'PT','it-IT':'IT',
-    'ru-RU':'RU','ar-ME':'AR','ar-SA':'AR',
-    'zh-CN':'ZH','zh-TW':'ZH','zh-HK':'ZH','hi-IN':'HI','ko-KR':'KO',
-    'pl-PL':'PL','tr-TR':'TR','nl-NL':'NL','fi-FI':'FI',
-    'sv-SE':'SV','nb-NO':'NO','da-DK':'DA','cs-CZ':'CS',
-    'ro-RO':'RO','hu-HU':'HU','ms-MY':'MS','th-TH':'TH',
-    'id-ID':'ID','vi-VN':'VI','te-IN':'TE','ta-IN':'TA',
-  };
+  // Locale display names (lib/locales.js) — each dub = a subtitle source option.
+  const { LABELS: LOCALE_LABELS, SHORT: LOCALE_SHORT } = NS.locales;
 
   const originalFetch = window.fetch.bind(window);
 
@@ -457,6 +414,7 @@
   const sourceMenu = NS.createSourceMenu({
     getEpisode:      () => currentEp(),
     isOverlayActive: () => overlayActive,
+    localeHasContent,
     localeLabels:    LOCALE_LABELS,
     onSelectLocale:  (locale) => selectSource(locale),
     onSelectCustom:  (id)     => selectSource(id),
@@ -496,7 +454,7 @@
     onAdjustTiming:  ()       => openTimingPanel(),
     getAdjustTimingAction: () => overlayActive ? { label: '⏱ Adjust timing…' } : null,
     onExport:        ()       => exportActiveCustom().catch(e => log.warn('Export error:', e)),
-    // One-click translate using the saved target/source (+ popup provider) — no
+    // One-click translate using the saved target/source — no
     // re-picking once you're comfortable with your choices.
     onTranslate:     ()       => translateToTarget(),
     // Shown even before MT is set up: CR rarely ships the language people come
@@ -557,20 +515,9 @@
   // silently absorb writes via Episode's internal disposed-guard.
   const getEpisodeGuid = () => window.location.pathname.match(/\/watch\/([^/]+)/)?.[1] ?? null;
 
-  // Coarse, non-identifying platform string (OS family + Chrome major) — we
-  // deliberately never put the full User-Agent (a fingerprinting surface) in a
-  // report.  The episode guid is a public id; we drop the title slug.
-  function coarsePlatform() {
-    const ua = navigator.userAgent || '';
-    let os = 'Unknown';
-    if (/Windows NT/.test(ua)) os = 'Windows';
-    else if (/Mac OS X/.test(ua)) os = 'macOS';
-    else if (/CrOS/.test(ua)) os = 'ChromeOS';
-    else if (/Android/.test(ua)) os = 'Android';
-    else if (/Linux/.test(ua)) os = 'Linux';
-    const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
-    return `${os} · Chrome ${m ? m[1] : '?'}`;
-  }
+  // Coarse platform string for reports (lib/config.js); the episode guid is a
+  // public id; we drop the title slug.
+  const coarsePlatform = () => NS.config?.coarsePlatform?.() ?? 'Unknown';
   const currentEp      = () => EP.current();
 
   // storeSessionSubs is the most-called catalog op below; route through the
@@ -745,6 +692,8 @@
       return;
     }
     log.info(`Loaded local subtitle file [${file.name}] — ${record.srcCues.length} cues.`);
+    // A new file invalidates any half-done translation of the previous one.
+    clearMtPartials(ep.guid, CUSTOM_LOCAL_ID);
     ep.addCustomSource(record);
     sourceMenu.updateButtonVisibility();
     // force=true: re-uploading replaces the same 'custom:local' slot, so the id
@@ -1194,11 +1143,7 @@
     if (code === 'no-key')         return 'Add a translation API key in the extension popup.';
     if (code === 'timeout')        return 'Translation timed out — check your connection and try again.';
     if (/403|401/.test(code || '')) return 'Translation rejected — check your API key.';
-    if (/429/.test(code || '')) {
-      return /per day|\bday\b/i.test(code)
-        ? 'Daily free quota reached — resets ~midnight Pacific. Switch to DeepL or try tomorrow.'
-        : 'Rate limited — wait a minute and retry (free tiers are strict).';
-    }
+    if (/429/.test(code || ''))     return 'Rate limited — wait a minute and retry (free tiers are strict).';
     if (/456/.test(code || ''))     return 'Translation quota reached for your key.';
     return 'Translation failed — see the popup to check your key.';
   }
@@ -1219,6 +1164,12 @@
   // Resolve a CR locale to render-ready cues, lazily fetching its session/URL the
   // same way the activation path does.
   async function fetchCuesForLocale(ep, locale) {
+    // The user's uploaded file: its cues with their sync baked in, no fetch.
+    if (locale === CUSTOM_LOCAL_ID) {
+      const rec = ep.getCustomSource(CUSTOM_LOCAL_ID);
+      const cues = rec ? applyCustomSync(rec) : [];
+      return cues.length ? { cues, rawText: rec.signRawAss, url: null } : null;
+    }
     // Resolve the signed subtitle URL.  forceFresh evicts the cached URL first —
     // same evict + refetch the activation path (loadSubtitleCues) uses — so a
     // stale (expired-signature) URL can be replaced with a freshly-signed one.
@@ -1277,16 +1228,16 @@
   }
 
   // Partial-progress cache: every batch's translations are persisted keyed by
-  // (guid, source, target, provider), so a transient rate-limit, a cancel, or a
+  // (guid, source, target), so a transient rate-limit, a cancel, or a
   // tab close never re-spends quota on cues already done — a re-run RESUMES from
   // where it stopped.  This is what makes translation a reliable "click once and
   // it converges" operation instead of an all-or-nothing gamble.
   const MT_PARTIAL_TTL = 24 * 60 * 60 * 1000;
-  const mtPartialKey = (guid, source, target, provider) =>
-    `crSubFix_mtpart_${guid}_${source}_${target}_${provider}`;
-  function clearMtPartials(guid) {
+  const mtPartialKey = (guid, source, target) =>
+    `crSubFix_mtpart_${guid}_${source}_${target}_deepl`;
+  function clearMtPartials(guid, source = '') {
     try {
-      const pfx = `crSubFix_mtpart_${guid}_`;
+      const pfx = `crSubFix_mtpart_${guid}_${source}`;
       const hits = [];
       for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(pfx)) hits.push(k); }
       hits.forEach(k => STORAGE.lsDel(k));
@@ -1297,7 +1248,7 @@
   let _translateCancel = false;
   function cancelTranslate() { if (_translating) _translateCancel = true; }
 
-  // opts = { target, provider, source } — explicit overrides from the Translate
+  // opts = { target, source } — explicit overrides from the Translate
   // panel; each falls back to the popup-configured default / auto source.
   async function translateToTarget(opts) {
     const ep = currentEp();
@@ -1308,17 +1259,20 @@
       return;
     }
     const target   = (opts && opts.target)   || getMtTarget();
-    const provider = (opts && opts.provider) || getMtProvider();
-    const id       = mtId(target, provider);
+    const id       = mtId(target);
     const tLabel   = mtLangLabel(target);
-    const pLabel   = MT_PROVIDER_LABELS[provider] ?? provider;
 
-    // Already generated for this episode+target+provider → just select it.
-    if (ep.getCustomSource(id)) { selectSource(id); return; }
+    // One MT track per target.  Already generated → just select it, unless the
+    // user explicitly picked a DIFFERENT source (Translate panel), which
+    // re-translates and replaces it in place.  The old track stays usable until
+    // the new one completes, so a failed/paused run loses nothing.
+    const existing = ep.getCustomSource(id);
+    if (existing && (!opts?.source || opts.source === existing.mtSource)) { selectSource(id); return; }
 
     const source = (opts && opts.source) || pickMtSourceLocale(ep, target);
     if (!source) { showErrorToast('No subtitle track available to translate from.'); return; }
-    const sLabel = LOCALE_LABELS[source] ?? source;
+    const sLabel = source === CUSTOM_LOCAL_ID ? 'your file' : (LOCALE_LABELS[source] ?? source);
+    const srcLang = isCustomId(source) ? '' : source;   // upload's language unknown → provider auto-detects
 
     const hud = UI.makeProgressHud(toastHost());
     hud.html(`<span style="color:${THEME.accent};font-weight:700;">⟳ Translating ${escapeHtml(sLabel)} → ${escapeHtml(tLabel)}</span>` +
@@ -1330,7 +1284,9 @@
     // fetched.rawText comes from the sessionStorage raw cache, which can miss
     // under quota pressure — fall back to the active source's in-memory raw
     // (translating FROM the active source is the common case anyway).
-    const baseRawAss = (fetched && fetched.rawText) || _signRawAss;
+    // An upload's null rawText means "no signs", not a cache miss — never borrow
+    // the active CR track's signs for it.
+    const baseRawAss = isCustomId(source) ? fetched?.rawText : ((fetched && fetched.rawText) || _signRawAss);
     if (!cues || !cues.length) {
       hud.fade();
       showErrorToast('Could not load the source subtitles to translate.');
@@ -1338,29 +1294,19 @@
     }
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const TUNE  = mtTuning(provider);
+    const TUNE  = mtTuning();
     const BATCH = TUNE.batch;
     const PACE  = TUNE.pace;
-    const texts = cues.map(c => c.text);
-    // Also translate the base track's typeset signs: extract their text and append
-    // it to the batch so it rides the same retry/resume/quota path as dialogue.
+    // Also translate the base track's typeset signs: their text is appended to
+    // the job so it rides the same retry/resume/quota path as dialogue.  Saved
+    // partial progress for this exact (guid,source,target) is resumed.
     const signsBase = buildSignsAss(baseRawAss);
     const signParse = signsBase ? extractSignTexts(signsBase) : null;
-    const nDlg = texts.length;                                   // dialogue / signs split point
-    if (signParse && signParse.texts.length) texts.push(...signParse.texts);
-    const out   = new Array(texts.length);
+    const partKey = mtPartialKey(ep.guid, source, target);
+    const { texts, nDlg, out, todo, resumed } =
+      CUSTOM.planMtJob(cues.map(c => c.text), signParse?.texts, STORAGE.lsGet(partKey));
 
-    // Resume any saved partial progress for this exact (guid,source,target,provider).
-    const partKey = mtPartialKey(ep.guid, source, target, provider);
-    const saved   = STORAGE.lsGet(partKey);
-    let resumed = 0;
-    if (Array.isArray(saved) && saved.length === texts.length) {
-      for (let i = 0; i < texts.length; i++) if (saved[i] != null) { out[i] = saved[i]; resumed++; }
-    }
-    const todo = [];
-    for (let i = 0; i < texts.length; i++) if (out[i] == null) todo.push(i);
-
-    log.info(`Translate cfg: provider=${provider} batch=${BATCH} pace=${PACE}ms timeout=${TUNE.timeout}ms ` +
+    log.info(`Translate cfg: batch=${BATCH} pace=${PACE}ms timeout=${TUNE.timeout}ms ` +
              `rateWait=${TUNE.rateWait}ms retries=${TUNE.retries} cues=${cues.length} signs=${signParse ? signParse.texts.length : 0} resumed=${resumed} todo=${todo.length}`);
 
     _translating = true;
@@ -1379,7 +1325,7 @@
         let res, attempt = 0;
         for (;;) {
           hud.update(done, texts.length, attempt ? `rate limited — retry ${attempt}…` : `translating via ${escapeHtml(sLabel)}`);
-          res = await rpc('translate', { texts: batch, source, target }, TUNE.timeout);
+          res = await rpc('translate', { texts: batch, source: srcLang, target }, TUNE.timeout);
           if (ep.disposed) { hideTranslateProgress(); return; }
           if (_translateCancel) { hud.html(`<span style="color:#ffc107;">⏸</span>  Paused — ${done}/${texts.length} saved (click Translate to resume)`, 5000); hideTranslateProgress(); return; }
           if (res.ok && Array.isArray(res.translations) && res.translations.length === batch.length) break;
@@ -1390,12 +1336,12 @@
           const deadBridge = /context invalidated|receiving end|could not establish|message channel closed/i.test(String(res.error || ''));
           const fatal      = /40[13]|456|no-key/.test(String(res.error || ''));
           if (fatal || attempt >= TUNE.retries) {
-            if (deadBridge && autoReloadIfBridgeDead(ep, target, provider, source, res.error, hud)) return;
+            if (deadBridge && autoReloadIfBridgeDead(ep, target, source, res.error, hud)) return;
             hud.fade();
             hideTranslateProgress();
             log.warn(`Translate stopped at ${done}/${texts.length}: ${res.error}`);
             const note = done > 0 ? ` (${done}/${texts.length} saved — click Translate to resume)` : '';
-            showErrorToast(mtErrorText(res.error) + note, () => translateToTarget({ target, provider, source }));
+            showErrorToast(mtErrorText(res.error) + note, () => translateToTarget({ target, source }));
             return;
           }
           attempt++;
@@ -1417,13 +1363,13 @@
     }
 
     // Complete — build the track, drop the partial cache.
-    const mtCues = cues.map((c, k) => ({ ...c, text: out[k] || c.text, srcText: c.text }));
+    const mtCues = CUSTOM.mtCuesFrom(cues, out);
     // Put the sign translations (the tail of `out`) back into the signs .ass; a
     // missing one keeps its source-language text.  null = base has no signs.
     const signRawAss = signParse ? rebuildSignsAss(signParse, out.slice(nDlg)) : (signsBase || null);
     ep.addCustomSource(CUSTOM.makeMtSource({
       id, target, source,
-      label: `${tLabel} (${pLabel})`,
+      label: `${tLabel} (DeepL)`,
       srcCues: mtCues,
       signRawAss,   // base track's typeset signs, translated to the target
     }));
@@ -1433,15 +1379,18 @@
     hud.fade();
     hideTranslateProgress();
     log.info(`Machine-translated ${cues.length} cues ${source} → ${target} (resumed ${resumed}).`);
-    UI.showToast({ host: toastHost(), text: `Machine translation — not authored ${tLabel}`, duration: 5000 });
-    selectSource(id);
+    UI.showToast({ host: toastHost(), duration: 5000, text: existing
+      ? `Replaced ${tLabel} with a translation from ${sLabel}`
+      : `Machine translation — not authored ${tLabel}` });
+    if (existing && getSecondaryPref() === id) selectSecondary(id);   // reload the band's cues
+    selectSource(id, !!existing);   // same id, new cues — bypass the same-id short-circuit
   }
 
   // Reload-and-resume safety net.  ONLY for a genuinely dead content↔SW bridge
   // (extension reloaded under an open tab) — not for 429s/timeouts, where the
   // worker is alive and reloading wouldn't help.  Bounded to one reload per tab
   // session (sessionStorage survives the reload), so it can never loop.
-  function autoReloadIfBridgeDead(ep, target, provider, source, errMsg, hud) {
+  function autoReloadIfBridgeDead(ep, target, source, errMsg, hud) {
     const dead = /context invalidated|receiving end|could not establish|message channel closed/i.test(String(errMsg || ''));
     if (!dead) return false;
     try {
@@ -1450,7 +1399,7 @@
     // If the once-per-tab-session guard can't persist (storage full/blocked),
     // reloading could loop — skip the reload, mirroring crSubFix_reloaded_*.
     if (!STORAGE.ssSet('crSubFix_mt_reloaded', '1')) return false;
-    STORAGE.lsSet('crSubFix_mt_resume_' + ep.guid, { target, provider, source }, 5 * 60 * 1000);
+    STORAGE.lsSet('crSubFix_mt_resume_' + ep.guid, { target, source }, 5 * 60 * 1000);
     log.warn('Translate: extension↔worker bridge dead — reloading to recover (resume flagged).');
     try { hud.html('<span style="color:#ffc107;">⟳</span>  Reconnecting — reloading the page…', 4000); } catch (_) {}
     _translating = false; _translateCancel = false;
@@ -1475,13 +1424,14 @@
       return;
     }
     STORAGE.lsDel(key);  // ready — consume now (one-shot)
-    if (flag.target && flag.provider && ep.getCustomSource(mtId(flag.target, flag.provider))) return;  // already finished
+    const done = flag.target && ep.getCustomSource(mtId(flag.target));
+    if (done && (!flag.source || done.mtSource === flag.source)) return;  // already finished
     log.info('Auto-resuming translation after reload.');
-    setTimeout(() => { if (!_translating) translateToTarget({ target: flag.target, provider: flag.provider, source: flag.source }).catch(() => {}); }, 1200);
+    setTimeout(() => { if (!_translating) translateToTarget({ target: flag.target, source: flag.source }).catch(() => {}); }, 1200);
   }
 
   // ── In-player Translate panel ─────────────────────────────────────────────
-  // Lets the user pick target + (per-episode) source + provider before kicking
+  // Lets the user pick target + (per-episode) source before kicking
   // off a translation.  The From list is built from THIS episode's valid CR
   // tracks, so it adapts automatically; 'Auto' picks the best (English).
   const TRANSLATE_PANEL_ID = 'cr-bsub-mt-panel';
@@ -1518,6 +1468,7 @@
   // Valid CR official tracks for this episode usable as a translation source.
   function validSourceOptions(ep, target) {
     const opts = [['', 'Auto (best available)']];
+    if (ep.getCustomSource(CUSTOM_LOCAL_ID)) opts.push([CUSTOM_LOCAL_ID, 'Your uploaded file']);
     for (const v of ep.catalog.versions()) {
       const loc = v.locale;
       if (loc === target || localeHasContent(loc) === false) continue;
@@ -1553,8 +1504,7 @@
     let target = getMtTarget();
     mtSetOptions(toSel,   MT_TARGET_OPTIONS,              target);
     mtSetOptions(fromSel, validSourceOptions(ep, target), getMtSourcePref() || '');
-    panel.querySelector('[data-row="prov"]').textContent =
-      `Engine: ${MT_PROVIDER_LABELS[getMtProvider()] ?? 'DeepL'}`;
+    panel.querySelector('[data-row="prov"]').textContent = 'Engine: DeepL';
     // Persist on change so choices stick across episodes (no re-picking); rebuild
     // From when the target changes (can't translate a language into itself).
     toSel.addEventListener('change', () => {
@@ -1587,117 +1537,6 @@
     _mtPanelEsc = (e) => { if (e.key === 'Escape') closeTranslatePanel(); };
     setTimeout(() => document.addEventListener('keydown', _mtPanelEsc), 0);
   }
-
-  // ── In-player typeset tuning panel ────────────────────────────────────────
-  // Live sliders for the \pos-sign transform tuning (perspective / 3-D / skew /
-  // rotation / size) so the right defaults can be dialled in visually.  Each
-  // slider writes localStorage and forces an immediate repaint.  Opened via
-  // crSubFixDebug.tune().
-  const TUNE_PANEL_ID = 'cr-bsub-tune-panel';
-  let _tuneTeardown = null;
-  function closeTypesetTunePanel() {
-    document.getElementById(TUNE_PANEL_ID)?.remove();
-    if (_tuneTeardown) { _tuneTeardown(); _tuneTeardown = null; }
-  }
-  function tuneSlider(label, lsKey, min, max, step, def, suffix) {
-    const row = document.createElement('div');
-    row.style.cssText = 'margin-bottom:9px;';
-    let cur = def;
-    try { const v = parseFloat(localStorage.getItem(lsKey)); if (!isNaN(v)) cur = v; } catch (_) {}
-    const head = document.createElement('div');
-    head.style.cssText = 'display:flex;justify-content:space-between;font-size:11px;color:#bbb;margin-bottom:2px;';
-    const lab = document.createElement('span'); lab.textContent = label;
-    const val = document.createElement('span'); val.textContent = cur + suffix; val.style.color = THEME.accent;
-    head.append(lab, val);
-    const range = document.createElement('input');
-    range.type = 'range'; range.min = min; range.max = max; range.step = step; range.value = cur;
-    range.style.cssText = `width:100%;cursor:pointer;accent-color:${THEME.accent};`;
-    range.addEventListener('input', () => {
-      const v = parseFloat(range.value);
-      val.textContent = v + suffix;
-      try { localStorage.setItem(lsKey, String(v)); } catch (_) {}
-      try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
-    });
-    row.append(head, range);
-    return row;
-  }
-  function openTypesetTunePanel() {
-    if (!videoEl) return;
-    closeTypesetTunePanel();
-    const panel = document.createElement('div');
-    panel.id = TUNE_PANEL_ID;
-    Object.assign(panel.style, panelStyle({
-      position: 'absolute', zIndex: '2147483646', padding: '10px 13px', width: '270px',
-    }));
-    const title = document.createElement('div');
-    title.style.cssText = `font-size:13px;font-weight:700;color:${THEME.accent};margin-bottom:9px;cursor:move;`;
-    title.textContent = '🎚 Typeset tuning (signs) ⠿';
-    panel.appendChild(title);
-    panel.appendChild(tuneSlider('Perspective',  'crSubFix_persp',     300, 2200, 25,   1018, 'px'));
-    panel.appendChild(tuneSlider('3-D strength',  'crSubFix_ts_3d',    0,   2,    0.05, 1,   '×'));
-    panel.appendChild(tuneSlider('Skew',          'crSubFix_ts_skew',  0,   2,    0.05, 1,   '×'));
-    panel.appendChild(tuneSlider('Rotation',      'crSubFix_ts_rot',   0,   2,    0.05, 1,   '×'));
-    panel.appendChild(tuneSlider('Sign size',     'crSubFix_signscale', 0.5, 1.3, 0.02, 0.9, '×'));
-    const note = document.createElement('div');
-    note.style.cssText = 'font-size:10px;color:#777;line-height:1.4;margin:2px 0 8px;';
-    note.textContent = '× = multiplier on the file’s value (1 = exact). Tell me the values you like and I’ll bake them in.';
-    panel.appendChild(note);
-    const foot = document.createElement('div');
-    foot.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
-    const resetB = syncBtn('Reset'); const doneB = syncBtn('Done', true);
-    foot.append(resetB, doneB);
-    panel.appendChild(foot);
-    resetB.addEventListener('click', () => {
-      ['crSubFix_persp', 'crSubFix_ts_3d', 'crSubFix_ts_skew', 'crSubFix_ts_rot', 'crSubFix_signscale']
-        .forEach((k) => { try { localStorage.removeItem(k); } catch (_) {} });
-      try { renderer.invalidate(); onTimeUpdate(); } catch (_) {}
-      openTypesetTunePanel();   // rebuild sliders at defaults
-    });
-    doneB.addEventListener('click', closeTypesetTunePanel);
-
-    const mount = document.fullscreenElement ?? videoEl.parentElement ?? document.body;
-    if (mount !== document.body && window.getComputedStyle(mount).position === 'static') mount.style.position = 'relative';
-    mount.appendChild(panel);
-    panel.style.left = '14px'; panel.style.top = '12%';
-
-    // Drag by the title bar so it can be moved off the signs being tuned.
-    let drag = null;
-    const onDown = (e) => {
-      const pr = (panel.offsetParent || document.body).getBoundingClientRect();
-      const r = panel.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, pr };
-      e.preventDefault();
-    };
-    const onMove = (e) => {
-      if (!drag) return;
-      panel.style.left = (e.clientX - drag.dx - drag.pr.left) + 'px';
-      panel.style.top  = (e.clientY - drag.dy - drag.pr.top) + 'px';
-    };
-    const onUp = () => { drag = null; };
-    const onEsc = (e) => { if (e.key === 'Escape') closeTypesetTunePanel(); };
-    title.addEventListener('mousedown', onDown);
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    setTimeout(() => document.addEventListener('keydown', onEsc), 0);
-    _tuneTeardown = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      document.removeEventListener('keydown', onEsc);
-    };
-  }
-
-  // ── Anchor map remaster ────────────────────────────────────────────────────
-  //
-  // Builds a sparse set of {srcTime, refTime} pairs by text-matching identical
-  // subtitle cues from two sessions.  These pairs define a piecewise-linear
-  // time-remapping curve: any cue timestamp from the source session can be
-  // interpolated onto the audio session's timeline.
-  //
-  // Unlike a single constant offset, this handles multiple cut points, scene
-  // insertions/removals, and gradual timing drift within a single file.
-  //
-  // The anchor map is keyed by (episode × srcSession × audioSession) so ONE
-  // computation retimes every subtitle language for that session pair.
 
   // ── Subtitle text fetcher ─────────────────────────────────────────────────
   // Pure timing algorithms (buildAnchorMap, interpolateTime, remasterCues,
@@ -1822,6 +1661,7 @@
    *   6. Save anchor map to localStorage (30-day TTL).
    *   7. Display progress HUD and completion badge.
    */
+  const _remasterFail = new Map();   // anchorMapKey → { anchors, est }; ~100 B per episode combo per page session
   async function runRemaster(cues, loadedUrl, subLang) {
     const ep = currentEp();
     if (!ep) return;
@@ -1925,7 +1765,11 @@
     const isSparseRef = refBridgeCues.length < 30;
 
     updateProgress(5, 8, `Building timing anchors`);
-    const anchorMap = buildAnchorMap(srcBridgeCues, refBridgeCues);
+    // A failed anchor build is only cached in memory (saveAnchorMap keeps successes),
+    // so without this every toggle re-ran ~50ms of matching to fail again.
+    const failKey   = ep.anchorMapKey(srcSession, audioLocale);
+    const failMemo  = _remasterFail.get(failKey);
+    const anchorMap = failMemo ? failMemo.anchors : buildAnchorMap(srcBridgeCues, refBridgeCues);
 
     if (anchorMap.length < MIN_ANCHORS) {
       if (isSparseRef && bridge === audioLocale) {
@@ -1941,7 +1785,8 @@
       // just adds a few seconds of lead-in).  Recover that one offset from a
       // coarse, outlier-robust match and shift the whole track rather than
       // showing it at raw (wrong) timing.
-      const est = estimateGlobalOffset(srcBridgeCues, refBridgeCues);
+      const est = failMemo ? failMemo.est : estimateGlobalOffset(srcBridgeCues, refBridgeCues);
+      _remasterFail.set(failKey, { anchors: anchorMap, est });
       if (est && Math.abs(est.offset) >= 0.5) {
         ep.setRemasteredCues(shiftCues(cues, est.offset), audioLocale);
         renderer.invalidate();
@@ -2045,17 +1890,15 @@
   // (The style-override values are read directly via SETTINGS.read in
   // captureStyleCtx(), so no per-key getter accessors are kept here.)
   // Target + source are chosen on the player (⚙ Translation settings) and
-  // persisted to localStorage, so they stick across episodes without re-picking;
-  // the popup schema value is only the first-run fallback.  (Provider + key stay
-  // in the popup — Chrome only lets an extension PAGE request the host
-  // permission, and a provider is paired with its key.)
+  // persisted to localStorage, so they stick across episodes without re-picking.
+  // (The key stays in the popup — Chrome only lets an extension PAGE request
+  // the host permission.)
   const getMtTarget = () => {
     try { const v = localStorage.getItem('crSubFix_mt_target'); if (v) return v; } catch (_) {}
-    return SETTINGS.read(html, 'mtTarget') || 'ja-JP';
+    return 'ja-JP';
   };
   const getMtSourcePref = () => {
-    try { const v = localStorage.getItem('crSubFix_mt_source'); if (v != null) return v; } catch (_) {}
-    return SETTINGS.read(html, 'mtSource') || '';
+    try { return localStorage.getItem('crSubFix_mt_source') || ''; } catch (_) { return ''; }
   };
   const setMtPref = (key, val) => { try { localStorage.setItem('crSubFix_mt_' + key, val); } catch (_) {} };
   const isMtEnabled            = () => SETTINGS.read(html, 'mtEnabled');
@@ -2070,18 +1913,10 @@
     'pt-BR': 'Português (BR)', 'it-IT': 'Italiano',    'ru-RU': 'Русский',
   };
   const mtLangLabel = (loc) => MT_LANG_LABELS[loc] ?? LOCALE_LABELS[loc] ?? loc;
-  // Ordered target options for the in-player Translate panel.
-  const MT_TARGET_OPTIONS = [
-    ['ja-JP', 'Japanese'], ['ko-KR', 'Korean'], ['zh-CN', 'Chinese (Simplified)'],
-    ['zh-TW', 'Chinese (Traditional)'], ['en-US', 'English'], ['de-DE', 'Deutsch'],
-    ['es-419', 'Español (Lat)'], ['fr-FR', 'Français'], ['pt-BR', 'Português (BR)'],
-    ['it-IT', 'Italiano'], ['ru-RU', 'Русский'],
-  ];
-  const getMtProvider = () => 'deepl';
-  const MT_PROVIDER_LABELS = { deepl: 'DeepL' };
-  // MT tracks are keyed by target AND provider (provider is always 'deepl' now,
-  // but the key shape is kept stable so existing saved tracks still resolve).
-  const mtId = (target, provider) => `custom:mt:${target}:${provider}`;
+  // Ordered target options for the in-player Translate panel (es-ES is label-only).
+  const MT_TARGET_OPTIONS = Object.entries(MT_LANG_LABELS).filter(([loc]) => loc !== 'es-ES');
+  // DeepL is the only provider; the ':deepl' suffix keeps saved tracks resolving.
+  const mtId = (target) => `custom:mt:${target}:deepl`;
 
   // Runtime-tunable throughput knobs so the sweet spot for each API can be found
   // empirically without a rebuild.  Override from the page console:
@@ -2103,8 +1938,6 @@
       retries:  Math.max(1, num('crSubFix_mt_retries',  4)),
     };
   }
-
-  // hexToRgba lives in lib/cue-style.js — aliased near the top of this file.
 
   // ── Status reporting ───────────────────────────────────────────────────────
   function setJpStatus(status) {
@@ -2157,12 +1990,12 @@
     return s.replace(/[^a-zA-Z0-9 ,'\-\.]/g, '').trim();
   }
 
-  function debounce(fn, ms) {
-    let timer;
-    return function (...args) {
-      clearTimeout(timer);
-      timer = setTimeout(() => fn.apply(this, args), ms);
-    };
+  // Coalesce bursts into one call ≤ms after the first.  Unlike a debounce, a
+  // page that mutates continuously (the player's live UI) can't starve it, and
+  // each extra call is a single truthy check rather than a timer reset.
+  function throttle(fn, ms) {
+    let timer = 0;
+    return () => { timer ||= setTimeout(() => { timer = 0; fn(); }, ms); };
   }
 
   // ── SPA navigation ────────────────────────────────────────────────────────
@@ -2195,7 +2028,6 @@
     sourceMenu.close();
     closeSyncPanel();
     closeTranslatePanel();
-    closeTypesetTunePanel();
     closeTimingPanel();
     sourceMenu.removeButton();
     renderer.unmount();
@@ -2726,13 +2558,9 @@
     }
   }
 
-  // ── Subtitle parsing ──────────────────────────────────────────────────────
-  // ASS / WebVTT parsers, color utils, and normalizeSubText all live in
-  // lib/subtitle-parser.js — aliased near the top of this file.
-
   // ── Subtitle overlay ───────────────────────────────────────────────────────
   // Per-frame Cue render, overlay DOM lifecycle, and the cue-key cache live in
-  // lib/cue-renderer.js.  This file owns the timeupdate dispatch and the style
+  // lib/cue-renderer.js.  This file owns the per-frame/timeupdate dispatch and the style
   // context capture — both need access to settings + Episode, which the
   // renderer is deliberately ignorant of.
 
@@ -2751,7 +2579,11 @@
   // Whether that track actually carries \pos typeset signs — CR ships some
   // locales dialogue-only, in which case "Secondary"/"Both" have nothing to show.
   let _secondaryHasSigns = false;
-  const isLibassSigns = () => { try { return localStorage.getItem('crSubFix_libass') !== '0'; } catch (_) { return true; } };
+  // Per-tick prefs: read localStorage once, then serve from memory.  Setters
+  // reset the memo; another tab's change resets it via the 'storage' event.
+  let _libassMemo, _signSrcMemo, _secPrefMemo;
+  window.addEventListener('storage', () => { _libassMemo = _signSrcMemo = _secPrefMemo = undefined; });
+  const isLibassSigns = () => _libassMemo ??= (() => { try { return localStorage.getItem('crSubFix_libass') !== '0'; } catch (_) { return true; } })();
 
   // CJK detection (Hangul / Kana / CJK ideographs) — mirrors content.js.  libass
   // only has our bundled fonts, so CJK signs (e.g. machine-translated Simplified
@@ -2766,17 +2598,14 @@
   // set.  'both' merges the two sign layers and CAN overlap where translated
   // signs share a \pos — an accepted tradeoff the user opts into.
   const SIGN_SRC_KEY = 'crSubFix_signsrc';
-  const getSignSrcMode = () => { try { return localStorage.getItem(SIGN_SRC_KEY) || 'primary'; } catch (_) { return 'primary'; } };
+  const getSignSrcMode = () => _signSrcMemo ??= (() => { try { return localStorage.getItem(SIGN_SRC_KEY) || 'primary'; } catch (_) { return 'primary'; } })();
   function setSignSrcMode(mode) {
     try { localStorage.setItem(SIGN_SRC_KEY, mode || 'primary'); } catch (_) {}
+    _signSrcMemo = undefined;
     pushSignLayer();
     renderer.invalidate();
     if (overlayActive) onTimeUpdate();
   }
-
-  // buildSignsAss / extractSignTexts / rebuildSignsAss — the typeset-signs
-  // projection of an .ass — live in lib/sign-track.js and are destructured at
-  // the top of this file.
 
   // The signs .ass to push, per the selector.  'secondary'/'both' fall back to
   // the primary's signs when no secondary is loaded, so signs never vanish.
@@ -2982,9 +2811,10 @@
   // primary), or the dub's own CC for a same-language pick (natively timed to
   // the playing cut) — no remaster either way.
   const SECONDARY_PREF_KEY = 'crSubFix_secondary';
-  const getSecondaryPref = () => { try { return localStorage.getItem(SECONDARY_PREF_KEY) || ''; } catch (_) { return ''; } };
+  const getSecondaryPref = () => _secPrefMemo ??= (() => { try { return localStorage.getItem(SECONDARY_PREF_KEY) || ''; } catch (_) { return ''; } })();
   function setSecondaryPref(loc) {
     try { if (loc) localStorage.setItem(SECONDARY_PREF_KEY, loc); else localStorage.removeItem(SECONDARY_PREF_KEY); } catch (_) {}
+    _secPrefMemo = undefined;
   }
   // Lazily (re)load the secondary track when the pref, the Episode, or the
   // primary source changes.  Cheap no-op once in the desired state.  A secondary
@@ -3228,8 +3058,33 @@
     return pri;
   }
 
+  // Frame-accurate repaint: requestVideoFrameCallback fires once per presented
+  // video frame, so cue boundaries land on the right frame instead of up to
+  // ~250ms late (timeupdate's cadence).  timeupdate stays wired as the fallback
+  // (and re-arms this after a <video> swap); the renderer's cue-key cache makes
+  // the duplicate calls cheap.  Paused = no frames = no callbacks.
+  let _rvfc = null;   // { video, handle }
+  function armVideoFrame() {
+    const v = videoEl;
+    if (!v?.requestVideoFrameCallback || _rvfc?.video === v) return;
+    cancelVideoFrame();
+    const tick = () => {
+      if (_rvfc?.video !== v) return;
+      if (!overlayActive || videoEl !== v) { _rvfc = null; return; }
+      onTimeUpdate();
+      if (_rvfc?.video === v) _rvfc.handle = v.requestVideoFrameCallback(tick);
+    };
+    _rvfc = { video: v, handle: v.requestVideoFrameCallback(tick) };
+  }
+  function cancelVideoFrame() {
+    if (!_rvfc) return;
+    try { _rvfc.video.cancelVideoFrameCallback(_rvfc.handle); } catch (_) {}
+    _rvfc = null;
+  }
+
   function onTimeUpdate() {
     if (!overlayActive || !videoEl) return;
+    armVideoFrame();
     const ep = currentEp();
     if (!ep) return;
     maybeLoadSecondary(ep);
@@ -3245,7 +3100,7 @@
     const dialogue = isShowDialogue() ? priAll.filter((c) => !c.pos) : [];
 
     // Study mode: pause the instant a dialogue line finishes.  We act only on
-    // the showing→gap transition, and timeupdate stops firing once paused, so it
+    // the showing→gap transition, and frame/timeupdate ticks stop once paused, so it
     // can't loop; on the transition we SKIP the empty render so the just-ended
     // line stays readable while paused.
     const showingLine = dialogue.length > 0;
@@ -3365,6 +3220,7 @@
       videoEl.removeEventListener('pause',  onVideoPause);
       videoEl.removeEventListener('play',   onVideoPlay);
     }
+    cancelVideoFrame();
     renderer.setSelectable(false);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     renderer.hide();
@@ -3378,7 +3234,6 @@
     sourceMenu.close();
     closeSyncPanel();
     closeTranslatePanel();
-    closeTypesetTunePanel();
     closeTimingPanel();
     const fsEl = document.fullscreenElement;
     renderer.reparentForFullscreen(fsEl);
@@ -4252,7 +4107,7 @@
   }
 
   function watchForPlayer() {
-    const check = debounce(() => {
+    const check = throttle(() => {
       if (!isEnabled()) return;
       if (!getEpisodeGuid()) return;   // only active on /watch/ pages
       const video = document.querySelector('video');
@@ -4372,7 +4227,7 @@
       `state   : jpStatus=${el.getAttribute(PROTOCOL.ATTR.JP_STATUS) || '-'} source=${activeInfo.source ?? '-'} audio=${activeInfo.audio ?? '-'}`,
       `crsubs  : menuRows=${_subMenuRows} clean=${!_noCleanStream} burnedIn=${_hardsubStream} turnedOff=${_turnedCrSubsOff}`,
       `settings: enabled=${SETTINGS.read(el, 'enabled')} auto=${SETTINGS.read(el, 'autoActivate')} hideOfficial=${SETTINGS.read(el, 'hideOfficialSubs')} styleOverride=${SETTINGS.read(el, 'styleOverride')}`,
-      `mt      : configured=${el.getAttribute(PROTOCOL.ATTR.MT_CONFIGURED) || '-'} provider=${getMtProvider()} target=${getMtTarget()} source=${getMtSourcePref() || 'auto'}`,
+      `mt      : configured=${el.getAttribute(PROTOCOL.ATTR.MT_CONFIGURED) || '-'} provider=deepl target=${getMtTarget()} source=${getMtSourcePref() || 'auto'}`,
       '--- recent activity (most recent last) ---',
     );
     // Keep the MOST RECENT trace that fits the budget (the Worker's embed holds
@@ -4380,6 +4235,7 @@
     const header = lines.join('\n');
     const redact = redactSensitive;   // trace is already redacted at write time; idempotent here
     let trace = [];
+    flushTrace();
     try { trace = JSON.parse(sessionStorage.getItem(TRACE_KEY) || '[]'); } catch (_) {}
     let tail = trace.map(redact).join('\n');
     const room = 3800 - header.length;
@@ -4773,6 +4629,7 @@
     console.error('[CR Sub Fix] interceptor.js threw at module level:', err, err?.stack);
     // Best-effort persist to the trace (log may not be initialised if the throw
     // was early) so a later report still carries the load failure.
+    flushTrace(); traceRing = null;   // next log line re-reads, keeping this entry
     try {
       const arr = JSON.parse(sessionStorage.getItem('crSubFix_trace') || '[]');
       arr.push(`${Date.now()} [E] module-level throw: ${err && err.message} | ` +

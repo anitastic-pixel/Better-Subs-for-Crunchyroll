@@ -11,7 +11,8 @@
  *      can't reach — they render in the video's UA shadow DOM)
  *   2. Inject a <style> with broad class-pattern selectors (CSS layer)
  *   3. DOM-level visibility:hidden on the found container (strongest)
- *   4. 300 ms poll as a backstop to re-apply if anything slips through
+ *   4. Poll as a backstop to re-apply if anything slips through (300 ms
+ *      until the CSS layer is in place, 2 s after)
  *
  * All bitmovin-race handling, observer + poll lifecycle, track-mode save/restore,
  * and CSS injection live behind this seam — callers don't need to know any of it.
@@ -22,6 +23,7 @@
  *   s.deactivate()        — restore native subs and tear down observers/poll
  *   s.isActive()          — boolean
  *   s._suppressId         — the injected <style> id (for a caller's defensive sweep)
+ *   s.buildSuppressCSS()  — the injected stylesheet text (exposed for tests)
  *
  * overlayId is our own overlay's element id, excluded from every suppression
  * selector so we never hide ourselves.
@@ -72,9 +74,12 @@
 
       const root = video?.closest('[class*="player"]') ?? video?.parentElement;
       if (!root) return null;
+      // One tree scan instead of one per selector, but keep the selector-order
+      // priority (document order could pick an outer wrapper that contains
+      // our overlay): the first element matching the earliest selector wins.
+      const hits = root.querySelectorAll(SUB_SELECTORS.join(','));
       for (const sel of SUB_SELECTORS) {
-        const el = root.querySelector(sel);
-        if (el) return el;
+        for (const el of hits) if (el.matches(sel)) return el;
       }
       return null;
     }
@@ -118,7 +123,7 @@
       video  = videoEl;
       savedTrackModes = [];
       disableAllTracks();
-      // Event-driven disabling closes the up-to-300ms window between Crunchyroll
+      // Event-driven disabling closes the window between Crunchyroll
       // re-enabling a native track (stream (re)start, quality change, seek) and
       // the next poll: 'change' fires the instant a mode flips, 'addtrack' catches
       // tracks created after activation.  The poll below stays as a backstop.
@@ -131,21 +136,26 @@
       injectCSS();
       applyOnce();
       startObserver();
-      clearInterval(pollTimer);
-      pollTimer = setInterval(() => {
-        if (!active) { clearInterval(pollTimer); pollTimer = null; return; }
+      clearTimeout(pollTimer);
+      const tick = () => {
+        if (!active) { pollTimer = null; return; }
         // If the player container wasn't in the DOM at activate() time, the
         // event-driven observer never attached — retry here (self-guards on the
         // existing observer) so we don't fall back to poll-only forever.
         startObserver();
-        if (!document.getElementById(SUPPRESS_ID)) injectCSS();
+        const hadCSS = !!document.getElementById(SUPPRESS_ID);
+        if (!hadCSS) injectCSS();
         applyOnce();
-      }, 300);
+        // The CSS layer already hides every container this poll can find, so
+        // once it's in place the poll is only a slow backstop.
+        pollTimer = setTimeout(tick, hadCSS ? 2000 : 300);
+      };
+      pollTimer = setTimeout(tick, 300);
     }
 
     function deactivate() {
       active = false;
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
       observer?.disconnect();
       observer = null;
@@ -177,6 +187,7 @@
       deactivate,
       isActive: () => active,
       _suppressId: SUPPRESS_ID,  // exposed for the caller's defensive teardown sweep
+      buildSuppressCSS,
     };
   }
 

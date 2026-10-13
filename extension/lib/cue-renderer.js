@@ -12,7 +12,7 @@
  *     per render call and threaded through the build
  *
  * Does NOT own:
- *   • when to call render — caller drives that from timeupdate
+ *   • when to call render — caller drives that per video frame (timeupdate fallback)
  *   • which cues are active — caller resolves them (Episode.cuesAt)
  *   • settings — caller reads via getStyleCtx() and passes the resulting
  *     style context into render() each frame
@@ -57,10 +57,8 @@
     7: '0% 0%',    8: '50% 0%',   9: '100% 0%',
   };
 
-  const PARSER    = NS.CRSubFix.parser;
   const CUE_STYLE = NS.CRSubFix.cueStyle;
-  const { applyAlpha } = PARSER;
-  const { createOutlinedTextSvg, resolveBgYInsets, buildGlassCss, sanitizeFontName } = CUE_STYLE;
+  const { applyAlpha, createOutlinedTextSvg, resolveBgYInsets, buildGlassCss, sanitizeFontName } = CUE_STYLE;
 
   function createCueRenderer({ getSubScale, getSubBottomFloor }) {
     let videoEl  = null;
@@ -79,46 +77,15 @@
     let ctxMemoRef = null, ctxMemoStr = '';
     let resizeHandler = null;
 
-    // Per-render cache of the localStorage tuning reads below.  signTune() alone
-    // is read 3× per positioned sign; on a scene with many \pos signs that's
-    // dozens of synchronous localStorage hits per repaint.  render() resets this
-    // to {} at the top of each repaint, so the values are read at most once per
-    // key per frame and still pick up live tuning-slider changes next frame.
-    let _lsFrame = null;
-    function lsNum(key) {
-      if (_lsFrame && key in _lsFrame) return _lsFrame[key];
-      let v = NaN;
-      try { v = parseFloat(localStorage.getItem(key)); } catch (_) {}
-      if (_lsFrame) _lsFrame[key] = v;
-      return v;
-    }
-
     // Typeset (\pos) signs pass trueSize=true: they render near the EXACT ASS
     // size (no readability fudge, no user size slider) so they match the video's
-    // native typeset.  CR renders a hair smaller than pure libass, so a tunable
-    // sign factor (default 0.9, crSubFixDebug.signScale(x)) trims it.  Dialogue
-    // keeps the 0.65 readability factor and the user's size preference.
-    function signScale() {
-      const v = lsNum('crSubFix_signscale'); if (v > 0 && v <= 2) return v;
-      return 0.9;
-    }
-    // CSS perspective distance (px) for \frx/\fry 3-D rotation.  Scales with the
-    // rendered video height (libass projects in PlayRes space, so the focal
-    // length must scale with the video) — default ≈ 1× video height.  A
-    // localStorage override (the tuning slider) wins, for display-specific dial-in.
-    function signPersp(boxH) {
-      const v = lsNum('crSubFix_persp'); if (v > 0) return v;
-      return Math.round((boxH || 1018) * 1.0);
-    }
-    // Live tuning multipliers on the file's transform values (1 = faithful),
-    // driven by the in-player Typeset-tuning sliders (localStorage crSubFix_ts_*).
-    function signTune(key, def) {
-      const v = lsNum('crSubFix_ts_' + key); if (v >= 0) return v;
-      return def;
-    }
+    // native typeset.  CR renders a hair smaller than pure libass, so signs get a
+    // 0.9 factor.  Dialogue keeps the 0.65 readability factor and the user's
+    // size preference.
+    const SIGN_SCALE = 0.9;
     function calcFontSize(cue, vw, vh, trueSize) {
       const scale = trueSize ? 1 : (getSubScale?.() ?? 1);
-      const fudge = trueSize ? signScale() : 0.65;
+      const fudge = trueSize ? SIGN_SCALE : 0.65;
       if (cue.fontSize && cue.playResY) {
         return `${Math.max(8, Math.round((cue.fontSize / cue.playResY) * vh * fudge * scale))}px`;
       }
@@ -268,17 +235,18 @@
       // visually.  CSS list is evaluated right-to-left, so perspective (leftmost)
       // projects the fully-rotated geometry last.
       const has3D = cue.frx || cue.fry;
-      const rotMul = signTune('rot', 1), d3Mul = signTune('3d', 1), skewMul = signTune('skew', 1);
       const xforms = [];
-      if (has3D) xforms.push(`perspective(${signPersp(box.h)}px)`);
+      // Perspective scales with the rendered video height (libass projects in
+      // PlayRes space, so the focal length must scale with the video).
+      if (has3D) xforms.push(`perspective(${Math.round(box.h || 1018)}px)`);
       xforms.push(ALIGN_XFM[an] ?? ALIGN_XFM[2]);
       // Rotation order matches ASS (Rz·Ry·Rx — X applied first): list rotateY
       // BEFORE rotateX so CSS (right-to-left) applies X, then Y, then Z.
-      if (cue.frz) xforms.push(`rotate(${(-cue.frz * rotMul).toFixed(2)}deg)`);
-      if (cue.fry) xforms.push(`rotateY(${(cue.fry * d3Mul).toFixed(2)}deg)`);
-      if (cue.frx) xforms.push(`rotateX(${(-cue.frx * d3Mul).toFixed(2)}deg)`);
-      if (cue.fax) xforms.push(`skewX(${(-Math.atan(cue.fax * skewMul) * 180 / Math.PI).toFixed(2)}deg)`);
-      if (cue.fay) xforms.push(`skewY(${(-Math.atan(cue.fay * skewMul) * 180 / Math.PI).toFixed(2)}deg)`);
+      if (cue.frz) xforms.push(`rotate(${(-cue.frz).toFixed(2)}deg)`);
+      if (cue.fry) xforms.push(`rotateY(${(cue.fry).toFixed(2)}deg)`);
+      if (cue.frx) xforms.push(`rotateX(${(-cue.frx).toFixed(2)}deg)`);
+      if (cue.fax) xforms.push(`skewX(${(-Math.atan(cue.fax) * 180 / Math.PI).toFixed(2)}deg)`);
+      if (cue.fay) xforms.push(`skewY(${(-Math.atan(cue.fay) * 180 / Math.PI).toFixed(2)}deg)`);
 
       Object.assign(el.style, {
         position: 'absolute', pointerEvents: 'none',
@@ -538,7 +506,6 @@
       const key = `${ctxKey}||${cueKey}||S:${secKey}`;
       if (key === lastCueKey) return;
       lastCueKey = key;
-      _lsFrame = {};   // fresh per-repaint cache for the localStorage tuning reads
 
       reposition();
       // Map cues to the actual displayed video content (handles letterbox /

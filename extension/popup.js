@@ -161,27 +161,15 @@ const { STATUS: S, MSG } = self.CRSubFix.protocol;
 
 const STATUS_DISPLAY = {
   [S.NONE]:        { color: '#555',    pulse: false, text: 'Waiting for episode to load' },
-  loading:         { color: '#ffc107', pulse: true,  text: 'Fetching subtitle data…' },
   [S.READY]:       { color: '#4caf50', pulse: false, text: 'Subtitles ready' },
   [S.ACTIVE]:      { color: '#ff6b35', pulse: true,  text: 'Subtitles active' },
-  [S.RELOAD]:      { color: '#ffc107', pulse: false, text: 'Reload tab to activate subtitles' },
   [S.ERROR]:       { color: '#e55',    pulse: false, text: 'Error fetching subtitles — click the player button to retry' },
   [S.UNAVAILABLE]: { color: '#555',    pulse: false, text: 'No subtitles available for this episode' },
   notwatch:        { color: '#555',    pulse: false, text: 'Not on an episode page' },
   noscript:        { color: '#ffc107', pulse: false, text: 'Extension not active in this tab' },
 };
 
-// Minimal locale-code → friendly name table.  Mirrors the larger map in
-// interceptor.js but only carries the common ones — anything not listed
-// is shown as the raw code (e.g. "tr-TR"), which is still informative.
-const LOCALE_LABELS = {
-  'ja-JP': 'English (Japanese source)',  'en-US': 'English',  'en-GB': 'English (UK)',
-  'de-DE': 'German',    'es-419':'Spanish (LA)','es-ES':'Spanish',
-  'fr-FR': 'French',    'pt-BR': 'Portuguese (BR)','pt-PT':'Portuguese',
-  'it-IT': 'Italian',   'ru-RU': 'Russian',  'ar-SA': 'Arabic',
-  'zh-CN': 'Chinese (Simpl.)','zh-TW':'Chinese (Trad.)',
-  'hi-IN': 'Hindi',     'ko-KR': 'Korean',
-};
+const LOCALE_LABELS = self.CRSubFix.locales.LABELS;
 // Custom source ids ('custom:local', 'custom:mt:<target>:<provider>') aren't
 // locales — name them instead of leaking the raw id into the status card.
 const localeName = (l) => !l ? null
@@ -887,19 +875,7 @@ const reportHeaders = () => ({
   ...(REPORT_TOKEN ? { 'X-Better-Subs-Token': REPORT_TOKEN } : {}),
 });
 
-// Coarse, non-identifying platform string (OS family + Chrome major).  We never
-// send the full User-Agent — it's a fingerprinting surface — at any level.
-function coarsePlatform() {
-  const ua = navigator.userAgent || '';
-  let os = 'Unknown';
-  if (/Windows NT/.test(ua)) os = 'Windows';
-  else if (/Mac OS X/.test(ua)) os = 'macOS';
-  else if (/CrOS/.test(ua)) os = 'ChromeOS';
-  else if (/Android/.test(ua)) os = 'Android';
-  else if (/Linux/.test(ua)) os = 'Linux';
-  const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
-  return `${os} · Chrome ${m ? m[1] : '?'}`;
-}
+const coarsePlatform = () => self.CRSubFix.config?.coarsePlatform?.() ?? 'Unknown';
 
 async function buildDiagnostics(full) {
   const lines = [
@@ -923,8 +899,8 @@ async function buildDiagnostics(full) {
                `source=${page.activeInfo?.source ?? '-'} audio=${page.activeInfo?.audio ?? '-'}`);
     lines.push(`settings: enabled=${s.enabled} auto=${s.autoActivate} ` +
                `hideOfficial=${s.hideOfficialSubs} styleOverride=${s.styleOverride}`);
-    lines.push(`mt      : configured=${page.mtConfigured ?? '-'} provider=${s.mtProvider} ` +
-               `target=${page.mtTarget || s.mtTarget} source=${page.mtSource || s.mtSource || 'auto'}`);
+    lines.push(`mt      : configured=${page.mtConfigured ?? '-'} provider=deepl ` +
+               `target=${page.mtTarget || 'ja-JP'} source=${page.mtSource || 'auto'}`);
     lines.push('--- recent activity (most recent last) ---');
     // Keep the most recent trace that fits (headroom reserved for the note + the
     // Worker's ~4000 cap), trimming the oldest lines.

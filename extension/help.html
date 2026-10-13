@@ -544,23 +544,23 @@
         <div class="group-label">Show on screen</div>
         <label class="setting" for="s-official">
           <span><span class="row-label">Crunchyroll's own subtitles</span>
-            <span class="row-sub" style="display:block;">Show CR's built-in subtitles alongside ours</span></span>
+            <span class="row-sub" style="display:block;">Off sets Crunchyroll's own subtitle track to None</span></span>
           <span class="tswitch"></span>
         </label>
       </div>
       <div class="screen" style="max-width:460px;">
         <span class="tag">what you see</span>
-        <span class="reload-note">✓ clean stream (after reload)</span>
+        <span class="reload-note">✓ clean stream</span>
         <span class="band burned" style="bottom:24%;">Burned-in text — part of the picture</span>
         <span class="band pri">Our overlay</span>
       </div>
       <div class="callout c-shown"><b>Toggle ON (the default)</b> — Crunchyroll's subtitles stay. On a hardsub stream that means two subtitle sets at once: the italic line is baked into the video pixels and our overlay draws on top of it. If you've ever thought "I can still see Crunchyroll's subtitles underneath" — this toggle is why.</div>
-      <div class="callout c-hidden"><b>Toggle OFF</b> — the extension asks for the clean, text-free video stream. Takes effect on the next video load, so expect a reload prompt if a burned stream is already playing.
+      <div class="callout c-hidden"><b>Toggle OFF</b> — the extension sets Crunchyroll's own subtitle track to <b>None</b>, which swaps the player to the clean, text-free stream on the spot (a reload prompt appears only if the live switch can't run). It's Crunchyroll's own account-wide setting, so turning the toggle back on can't restore your old language — pick it again in Crunchyroll's subtitle menu.
         <span class="where">This same switch lives in the popup and in ▾ → Show on screen.</span></div>
     </div>
-    <p>Because the burned-in text is part of the video, switching to the clean stream takes
-       effect when the video next loads — that's why a <b>reload prompt</b> appears if a burned
-       stream is already playing when you hide Crunchyroll's subtitles.</p>
+    <p>Because the burned-in text is part of the video, the only way to lose it is a different
+       stream. A few episodes have no subtitle-free stream at all — then the extension tells you
+       their subtitles can't be hidden.</p>
   </section>
 
   <!-- ── 6. Dual subtitles & learning mode (interactive audio picker) ── -->

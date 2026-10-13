@@ -89,12 +89,10 @@
     { key: 'sign_textScale',            attr: 'data-cr-sign-text-scale',     default: 1,         type: 'float'  },
     // Machine translation (BYOK).  The API KEY is intentionally NOT in this
     // schema — it lives in chrome.storage.local read only by the service worker
-    // and must never be mirrored to the page DOM.  Only these non-secret
-    // selectors cross into the page.  mtSource '' = auto-pick the best track.
+    // and must never be mirrored to the page DOM.  Only the non-secret enable
+    // flag crosses into the page.  Target/source picks are page-side
+    // localStorage (crSubFix_mt_target / crSubFix_mt_source), set from the ▾ menu.
     { key: 'mtEnabled',            attr: 'data-cr-mt-enabled',     default: true,       type: 'bool'   },
-    { key: 'mtProvider',           attr: 'data-cr-mt-provider',    default: 'deepl',    type: 'string' },
-    { key: 'mtTarget',             attr: 'data-cr-mt-target',      default: 'ja-JP',    type: 'string' },
-    { key: 'mtSource',             attr: 'data-cr-mt-source',      default: '',         type: 'string' },
   ];
 
   function defaults() {
@@ -130,7 +128,12 @@
   }
 
   function writeAttrs(el, settings) {
-    for (const e of SCHEMA) el.setAttribute(e.attr, encode(e, settings[e.key]));
+    // Skip unchanged values: a same-value setAttribute still fires the page's
+    // settings observer (full repaint + sign-layer re-post).
+    for (const e of SCHEMA) {
+      const v = encode(e, settings[e.key]);
+      if (el.getAttribute(e.attr) !== v) el.setAttribute(e.attr, v);
+    }
   }
 
   function readAll(el) {
@@ -191,7 +194,6 @@
     NONE:        'none',
     READY:       'ready',
     ACTIVE:      'active',
-    RELOAD:      'reload',
     ERROR:       'error',
     UNAVAILABLE: 'unavailable',
   };

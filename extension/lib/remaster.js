@@ -56,13 +56,22 @@
                                        // (a real constant shift clusters tightly — measured ~0.93;
                                        //  a 50/50 split = two cuts spliced, not a single offset)
 
-  /** Jaccard similarity of word sets — fast, language-independent. */
-  function wordJaccard(a, b) {
-    const wa = a.split(/\s+/).filter(Boolean);
-    const wb = new Set(b.split(/\s+/).filter(Boolean));
-    let inter = 0;
-    for (const w of wa) if (wb.has(w)) inter++;
-    const union = new Set([...wa, ...wb]).size;
+  /** Normalized text → Map<word, count>, built once per cue (not per pair). */
+  function tokenize(txt) {
+    const m = new Map();
+    for (const w of txt.split(/\s+/)) if (w) m.set(w, (m.get(w) ?? 0) + 1);
+    return m;
+  }
+
+  /**
+   * Jaccard similarity of word sets — fast, language-independent.  `inter`
+   * counts a's repeated words once per occurrence (the original array-based
+   * scoring); union is the distinct-word count of both.
+   */
+  function wordJaccard(ta, tb) {
+    let inter = 0, shared = 0;
+    for (const [w, n] of ta) if (tb.has(w)) { inter += n; shared++; }
+    const union = ta.size + tb.size - shared;
     return union ? inter / union : 0;
   }
 
@@ -77,19 +86,20 @@
    */
   function buildAnchorMap(srcCues, refCues, opts) {
     const WINDOW = opts?.windowSec ?? DEFAULT_WINDOW_SEC;
-    const refNorm = refCues.map(rc => ({ rc, txt: normalizeSubText(rc.text) }));
+    const refNorm = refCues.map(rc => ({ rc, tok: tokenize(normalizeSubText(rc.text)) }));
     const anchors = [];
     let winLo = 0;
 
     for (const sc of srcCues) {
       const sTxt = normalizeSubText(sc.text);
       if (sTxt.length < MIN_CUE_CHARS) continue;
+      const sTok = tokenize(sTxt);
 
       while (winLo < refNorm.length && refNorm[winLo].rc.start < sc.start - WINDOW) winLo++;
 
       let bestScore = 0, bestRef = null;
       for (let i = winLo; i < refNorm.length && refNorm[i].rc.start <= sc.start + WINDOW; i++) {
-        const score = wordJaccard(sTxt, refNorm[i].txt);
+        const score = wordJaccard(sTok, refNorm[i].tok);
         if (score > bestScore) { bestScore = score; bestRef = refNorm[i].rc; }
       }
       if (bestScore >= MATCH_THRESHOLD && bestRef) {
@@ -167,17 +177,18 @@
   function estimateGlobalOffset(srcCues, refCues, opts) {
     const WINDOW = opts?.windowSec ?? DEFAULT_WINDOW_SEC;
     const thr    = opts?.threshold ?? OFFSET_MATCH_THRESHOLD;
-    const refNorm = refCues.map(rc => ({ rc, txt: normalizeSubText(rc.text) }));
+    const refNorm = refCues.map(rc => ({ rc, tok: tokenize(normalizeSubText(rc.text)) }));
     const deltas = [];
     let winLo = 0;
 
     for (const sc of srcCues) {
       const sTxt = normalizeSubText(sc.text);
       if (sTxt.length < MIN_CUE_CHARS) continue;
+      const sTok = tokenize(sTxt);
       while (winLo < refNorm.length && refNorm[winLo].rc.start < sc.start - WINDOW) winLo++;
       let bestScore = 0, bestRef = null;
       for (let i = winLo; i < refNorm.length && refNorm[i].rc.start <= sc.start + WINDOW; i++) {
-        const score = wordJaccard(sTxt, refNorm[i].txt);
+        const score = wordJaccard(sTok, refNorm[i].tok);
         if (score > bestScore) { bestScore = score; bestRef = refNorm[i].rc; }
       }
       if (bestScore >= thr && bestRef) deltas.push(bestRef.start - sc.start);

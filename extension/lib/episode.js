@@ -412,20 +412,10 @@
     if (_current) { _current.dispose(); _current = null; }
   }
 
-  // Get the Episode that matches a guid extracted from a fetch URL.  Returns
-  // the current Episode iff its guid matches; otherwise null.  Late-arriving
-  // playback responses for a navigated-away Episode return null and are
-  // dropped by the caller.
-  function getEpisode(g) {
-    if (!g) return null;
-    return (_current && _current.guid === g && !_current.disposed) ? _current : null;
-  }
-
   NS.CRSubFix.episode = {
     create:         createEpisode,
     start:          startEpisode,
     current:        currentEpisode,
     disposeCurrent: disposeCurrentEpisode,
-    get:            getEpisode,
   };
 })();
