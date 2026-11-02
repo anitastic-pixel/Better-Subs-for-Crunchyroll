@@ -337,7 +337,11 @@
   const TOGGLE_TOKEN = Math.random().toString(36).slice(2);
   document.documentElement.setAttribute(PROTOCOL.ATTR.TOGGLE_TOKEN, TOGGLE_TOKEN);
 
-  const PLAYBACK_RE    = /\/playback\/v3\/([^/]+)\/web\/chrome\/play/;
+  // CR moved the player to /playback/v4/…/play?locale=xx (seen live 2026-11);
+  // v3 still answers.  Match any version so the next bump doesn't silently
+  // kill capture (no catalog, no hide-official) the way v4 did.
+  const PLAYBACK_RE    = /\/playback\/v\d+\/([^/?]+)\/web\/chrome\/play/;
+  const PLAYBACK_VER   = 'v4';   // what our own fetches use — same as CR's player
   const LOG            = '[CR Sub Fix]';
   const BTN_ID           = 'cr-jp-cc-btn';
   const PROGRESS_ID      = 'cr-bsub-progress';
@@ -2304,7 +2308,7 @@
       log.info(`Queue resolver: self-triggering playback fetch for ${ep.guid}.`);
       try {
         await window.fetch(
-          `https://www.crunchyroll.com/playback/v3/${ep.guid}/web/chrome/play`,
+          `https://www.crunchyroll.com/playback/${PLAYBACK_VER}/${ep.guid}/web/chrome/play`,
           { credentials: 'include', headers: auth }
         );
       } catch (err) {
@@ -2323,7 +2327,10 @@
     }
     const btn = document.getElementById(BTN_ID);
     if (!btn) return;
-    if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl) {
+    // ja-JP session already captured but with no English track (regions without
+    // English): proceed — handleButtonClick falls back to another language.
+    const jpLoadedNoEn = ep.catalog.entries().some(([s, row]) => s === 'ja-JP' && Object.keys(row).length > 0);
+    if (!ep.jpCaptionUrl && !ep.jpSubtitleUrl && !jpLoadedNoEn) {
       // No JP URLs loaded yet — but if a guid mapping exists (carried across a
       // dub switch, or cached from a prior visit) and we can actually fetch it
       // (cached → no auth needed, or we have captured auth for a live fetch),
@@ -2478,7 +2485,7 @@
     let data;
     try {
       const resp = await originalFetch(
-        `https://www.crunchyroll.com/playback/v3/${jpGuid}/web/chrome/play`,
+        `https://www.crunchyroll.com/playback/${PLAYBACK_VER}/${jpGuid}/web/chrome/play`,
         { credentials: 'include', headers: authHeaders }
       );
 
@@ -2524,7 +2531,7 @@
     // soft fetchFailed instead.
     try {
       const resp = await originalFetch(
-        `https://www.crunchyroll.com/playback/v3/${guid}/web/chrome/play`,
+        `https://www.crunchyroll.com/playback/${PLAYBACK_VER}/${guid}/web/chrome/play`,
         { credentials: 'include', headers: authHeaders }
       );
 
@@ -3722,12 +3729,19 @@
         handleButtonClick(btn).catch(() => {});
         return;
       } else {
-        // JP subtitles truly unavailable — check if any other session has subtitle data.
+        // No English-from-JP track — fall back to any other subtitle language,
+        // preferring the viewer's own.  Includes the ja-JP session itself: in
+        // regions without English its row holds the only subs (e.g. es-419/es-ES),
+        // and skipping it left the click queued forever.
         let fallbackSession = null, fallbackSubLocale = null;
+        const native = getNativePref();
         for (const [sess, row] of catalog.entries()) {
-          if (sess === 'ja-JP') continue;
-          const first = Object.keys(row)[0];
-          if (first) { fallbackSession = sess; fallbackSubLocale = first; break; }
+          for (const loc of Object.keys(row)) {
+            if (loc === 'ja-JP' || !row[loc]) continue;
+            if (!fallbackSubLocale || loc === native) { fallbackSession = sess; fallbackSubLocale = loc; }
+            if (loc === native) break;
+          }
+          if (fallbackSubLocale === native) break;
         }
         if (fallbackSubLocale) {
           log.info(`No JP subs — auto-falling back to [${fallbackSubLocale}] from [${fallbackSession}] session.`);
