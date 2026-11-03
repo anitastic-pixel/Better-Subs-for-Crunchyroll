@@ -30,6 +30,9 @@
  *        DISCORD_WEBHOOK = your channel webhook URL  (required)
  *        REPORT_TOKEN    = a random string  (optional; if set, put the SAME
  *                          string in extension/lib/config.js REPORT_TOKEN).
+ *        GITHUB_TOKEN    = fine-grained PAT, ONLY the private triage repo,
+ *                          Issues: read & write  (optional, with TRIAGE_REPO)
+ *        TRIAGE_REPO     = "owner/better-subs-triage" — MUST be private.
  *   3. (Recommended) Settings -> Bindings -> Add -> Rate limiting -> name it
  *      RATE_LIMITER (e.g. 10 requests / 60s). Used automatically.
  *   4. Redeploy after any secret change (secrets don't apply until you do).
@@ -108,9 +111,41 @@ export default {
       }
     } catch (e) { discord = 'error'; console.warn('forward error', e && e.message); }
 
-    return json({ ok: true, discord }, 200, cors);
+    // Optional: also file it as an issue in a PRIVATE triage repo, so reports
+    // queue up for fixing instead of being copy-pasted out of Discord. Enabled
+    // only when both are set. TRIAGE_REPO MUST be private (PRIVACY.md promise).
+    let issue = 'off';
+    if (env.GITHUB_TOKEN && env.TRIAGE_REPO) {
+      try { issue = await fileIssue(env, text); }
+      catch (e) { issue = 'error'; console.warn('issue error', e && e.message); }
+    }
+
+    return json({ ok: true, discord, issue }, 200, cors);
   },
 };
+
+// The three senders all post { text }: popup report ("note    : …"), on-error
+// prompt ("error   : …"), survey ("SURVEY — …"). Label by shape, title by the
+// user's own line.
+async function fileIssue(env, text) {
+  const field = (k) => (text.match(new RegExp('^' + k + '\\s*: ?(.*)$', 'm')) || [])[1] || '';
+  const kind  = /^SURVEY/.test(text) ? 'survey' : /^error\s*:/m.test(text) ? 'error' : 'report';
+  const what  = field(kind === 'error' ? 'error' : 'note') || '(no note)';
+  const r = await fetch(`https://api.github.com/repos/${env.TRIAGE_REPO}/issues`, {
+    method:  'POST',
+    headers: {
+      'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
+      'Accept':        'application/vnd.github+json',
+      'User-Agent':    'better-subs-report-worker',
+    },
+    body: JSON.stringify({
+      title:  `[${kind}] v${field('version') || '?'}: ${what}`.slice(0, 120),
+      body:   '```\n' + text + '\n```',
+      labels: [kind],
+    }),
+  });
+  return r.ok ? 'ok' : 'fail:' + r.status;
+}
 
 function json(obj, status, cors) {
   return new Response(JSON.stringify(obj), {

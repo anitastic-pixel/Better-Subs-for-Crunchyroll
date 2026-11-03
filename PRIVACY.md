@@ -1,6 +1,6 @@
 # Privacy Policy — Better Subs for Crunchyroll
 
-_Last updated: 2026-09-21_
+_Last updated: 2026-11-02_
 
 **Better Subs for Crunchyroll does not collect, transmit, or sell your data
 automatically.** There are no analytics, no tracking, and no accounts. The one
@@ -108,8 +108,10 @@ The extension's content scripts run only on `www.crunchyroll.com` pages.
 
 The extension shares no data for advertising or sale. A problem report you
 choose to send is delivered to the developer through a Cloudflare Worker (which
-only relays it) and a private chat channel; these process the report on the
-developer's behalf and for no other purpose.
+only relays it) to a private chat channel and a private issue tracker, and may
+be analyzed with AI-assisted debugging tools; these process the report on the
+developer's behalf and for no other purpose. Reports are never published. Public
+release notes describe fixes in general terms only.
 
 If you enable machine translation, the subtitle text you translate is sent to
 **DeepL** under **your own** API key and their terms and privacy policy — a
